@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@lento/core": ["packages/core/src/index.ts"],
+      "@lento/core/client": ["packages/core/src/client/lento-api-client.ts"],
+      "@lento/server": ["packages/server/src/api/server.ts"],
+      "@lento/cli": ["packages/cli/src/index.ts"]
+    },
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "types": ["bun-types"]
+  }
+}

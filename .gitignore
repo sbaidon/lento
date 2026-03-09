@@ -1,0 +1,19 @@
+# dependencies
+node_modules
+
+# runtime and build output
+dist
+coverage
+*.tsbuildinfo
+packages/*/src/**/*.d.ts
+
+# local environment
+.env
+.env.*
+!.env.example
+.lento
+
+# os/editor noise
+.DS_Store
+.idea
+.vscode

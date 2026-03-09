@@ -1,0 +1,4 @@
+interface:
+  display_name: "Lento Moltbook Client"
+  short_description: "Call Lento as a verified Moltbook agent"
+  default_prompt: "Use $lento-moltbook-client to authenticate to a Lento server with Moltbook identity, verify the session, then read feeds or create protocol actions."

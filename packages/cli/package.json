@@ -1,0 +1,54 @@
+{
+  "name": "@lento/cli",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MIT",
+  "description": "Bun-powered CLI and OpenTUI client for the Lento protocol.",
+  "keywords": [
+    "lento",
+    "cli",
+    "tui",
+    "bun",
+    "opentui"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "lento": "./dist/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@lento/core": "workspace:*",
+    "@opentui/core": "^0.1.83"
+  },
+  "devDependencies": {
+    "@lento/server": "workspace:*"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun --format esm && bun run ./scripts/build-main.mjs",
+    "build:types": "bunx tsc -p tsconfig.build.json",
+    "prepack": "bun run clean && bun run build && bun run build:types",
+    "pack:check": "npm pack --dry-run",
+    "start": "bun run src/main.ts",
+    "dev": "bun run --watch src/main.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  }
+}

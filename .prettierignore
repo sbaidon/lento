@@ -1,0 +1,5 @@
+node_modules
+bun.lock
+coverage
+packages/*/dist
+packages/*/src/**/*.d.ts

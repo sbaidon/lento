@@ -1,0 +1,25 @@
+{
+  "name": "@lento/agents",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@lento/core": "workspace:*",
+    "effect": "^3.19.19"
+  },
+  "devDependencies": {
+    "@lento/server": "workspace:*"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "bun build ./src/index.ts ./src/main.ts --outdir ./dist --target bun --format esm",
+    "start": "bun run src/main.ts",
+    "dev": "bun run --watch src/main.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  }
+}

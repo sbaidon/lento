@@ -1,0 +1,50 @@
+{
+  "name": "@lento/core",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MIT",
+  "description": "Shared protocol logic, types, and API client for the Lento protocol.",
+  "keywords": [
+    "lento",
+    "protocol",
+    "trust",
+    "bun",
+    "typescript"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/lento-api-client.d.ts",
+      "import": "./dist/client/lento-api-client.js",
+      "default": "./dist/client/lento-api-client.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "rm -rf dist",
+    "build": "bun build ./src/index.ts ./src/client/lento-api-client.ts --outdir ./dist --target bun --format esm",
+    "build:types": "bunx tsc -p tsconfig.build.json",
+    "prepack": "bun run clean && bun run build && bun run build:types",
+    "pack:check": "npm pack --dry-run",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "^3.19.19"
+  }
+}
