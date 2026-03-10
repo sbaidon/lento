@@ -9,6 +9,12 @@ import {
   resolveAuthenticatedIdentity
 } from "./moltbook-identity";
 
+function stubFetch(
+  handler: (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>
+): typeof fetch {
+  return handler as typeof fetch;
+}
+
 describe("resolveAuthenticatedIdentity", () => {
   test("returns undefined when the header is absent", async () => {
     const request = new Request("http://localhost/health");
@@ -63,7 +69,7 @@ describe("resolveAuthenticatedIdentity", () => {
 describe("HttpMoltbookIdentityVerifier", () => {
   test("maps the Moltbook verify response", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const fetcher: typeof fetch = async (input, init) => {
+    const fetcher = stubFetch(async (input, init) => {
       calls.push({ url: String(input), init });
       return new Response(
         JSON.stringify({
@@ -82,7 +88,7 @@ describe("HttpMoltbookIdentityVerifier", () => {
         }),
         { status: 200 }
       );
-    };
+    });
 
     const verifier = new HttpMoltbookIdentityVerifier(
       "app-key",
@@ -114,8 +120,9 @@ describe("HttpMoltbookIdentityVerifier", () => {
   });
 
   test("returns null for invalid identity payloads", async () => {
-    const fetcher: typeof fetch = async () =>
-      new Response(JSON.stringify({ valid: false }), { status: 200 });
+    const fetcher = stubFetch(
+      async () => new Response(JSON.stringify({ valid: false }), { status: 200 })
+    );
 
     const verifier = new HttpMoltbookIdentityVerifier("app-key", fetcher);
     await expect(verifier.verify("identity-token")).resolves.toBeNull();
