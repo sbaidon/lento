@@ -31,7 +31,8 @@
     "ci": "bun run format:check && bun run lint:check && bun run typecheck && bun run build && bun run test && bun run coverage:check",
     "changeset": "bunx --bun changeset",
     "version-packages": "bunx --bun changeset version",
-    "release": "bunx --bun changeset publish"
+    "release": "bunx --bun changeset publish",
+    "release:disabled": "echo 'npm publishing disabled until the package scope decision is finalized'"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.8",

@@ -1,10 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { LentoApiClient } from "./lento-api-client";
 
+function stubFetch(
+  handler: (input: URL | RequestInfo, init?: RequestInit) => Promise<Response>
+): typeof fetch {
+  return handler as typeof fetch;
+}
+
 describe("LentoApiClient", () => {
   test("createUser posts handle and returns user payload", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const fetcher: typeof fetch = async (input, init) => {
+    const fetcher = stubFetch(async (input, init) => {
       calls.push({ url: String(input), init });
       return new Response(
         JSON.stringify({
@@ -31,7 +37,7 @@ describe("LentoApiClient", () => {
           status: 201
         }
       );
-    };
+    });
 
     const api = new LentoApiClient("http://localhost:3000", fetcher);
     const user = await api.createUser("alice");
@@ -45,18 +51,20 @@ describe("LentoApiClient", () => {
   });
 
   test("surfaces protocol errors with code and message", async () => {
-    const fetcher: typeof fetch = async () =>
-      new Response(
-        JSON.stringify({
-          error: {
-            code: "duplicate_handle",
-            message: "Handle already exists."
+    const fetcher = stubFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "duplicate_handle",
+              message: "Handle already exists."
+            }
+          }),
+          {
+            status: 409
           }
-        }),
-        {
-          status: 409
-        }
-      );
+        )
+    );
 
     const api = new LentoApiClient("http://localhost:3000", fetcher);
     await expect(api.createUser("alice")).rejects.toThrow(
@@ -66,10 +74,10 @@ describe("LentoApiClient", () => {
 
   test("adds feed limit query parameter", async () => {
     const calls: string[] = [];
-    const fetcher: typeof fetch = async (input) => {
+    const fetcher = stubFetch(async (input) => {
       calls.push(String(input));
       return new Response(JSON.stringify({ feed: [] }), { status: 200 });
-    };
+    });
 
     const api = new LentoApiClient("http://localhost:3000", fetcher);
     await api.getFeed("usr_42", 15);
@@ -79,7 +87,7 @@ describe("LentoApiClient", () => {
 
   test("sends moltbook identity token when configured", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const fetcher: typeof fetch = async (input, init) => {
+    const fetcher = stubFetch(async (input, init) => {
       calls.push({ url: String(input), init });
       return new Response(
         JSON.stringify({
@@ -91,7 +99,7 @@ describe("LentoApiClient", () => {
         }),
         { status: 200 }
       );
-    };
+    });
 
     const api = new LentoApiClient("http://localhost:3000", {
       fetcher,
@@ -109,7 +117,7 @@ describe("LentoApiClient", () => {
 
   test("registers and fetches the authenticated agent", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const fetcher: typeof fetch = async (input, init) => {
+    const fetcher = stubFetch(async (input, init) => {
       calls.push({ url: String(input), init });
       const pathname = new URL(String(input)).pathname;
 
@@ -176,7 +184,7 @@ describe("LentoApiClient", () => {
         }),
         { status: 200 }
       );
-    };
+    });
 
     const api = new LentoApiClient("http://localhost:3000", {
       fetcher,
@@ -194,10 +202,10 @@ describe("LentoApiClient", () => {
 
   test("can derive a client with a specific Moltbook identity token", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
-    const fetcher: typeof fetch = async (input, init) => {
+    const fetcher = stubFetch(async (input, init) => {
       calls.push({ url: String(input), init });
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
-    };
+    });
 
     const api = new LentoApiClient("http://localhost:3000", {
       fetcher,

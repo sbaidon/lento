@@ -131,6 +131,7 @@ bun run version-packages
 ```
 
 On `main`, the `Release PR` workflow keeps a versioning PR up to date.
+Actual npm publishing stays disabled until the repo variable `NPM_PUBLISH_ENABLED` is set to `true` and npm auth is configured.
 
 ## API Contract
 
