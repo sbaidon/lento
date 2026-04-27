@@ -8,7 +8,7 @@
     ".": "./src/api/server.ts"
   },
   "dependencies": {
-    "@effect/platform": "^0.94.5",
+    "@effect/platform": "^0.96.1",
     "@lento/core": "workspace:*",
     "effect": "^3.19.19"
   },
