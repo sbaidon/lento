@@ -52,6 +52,107 @@ for (const harness of harnesses) {
       };
     }
 
+    test("sponsored agents spend their sponsor's energy and cannot vouch or report", () => {
+      const { service, close } = createService();
+      try {
+        const now = 1000;
+        const sponsor = service.createUser({ handle: "sponsor", now });
+        const author = service.createUser({ handle: "author", now });
+        const post = service.createContent({ authorId: author.id, body: "hello", now });
+        const agent = service.createSponsoredAgent({
+          sponsorId: sponsor.id,
+          handle: "helper",
+          now
+        });
+
+        expect(agent.sponsorId).toBe(sponsor.id);
+        expect(agent.identity).toEqual({ provider: "lento", id: agent.id, name: "helper" });
+        expect(service.listSponsoredAgents(sponsor.id).map((item) => item.id)).toEqual([agent.id]);
+
+        const interaction = service.createInteraction({
+          actorId: agent.id,
+          targetContentId: post.id,
+          kind: "react",
+          clientNonce: "n1",
+          now
+        });
+        service.createContent({ authorId: agent.id, body: "agent post", now });
+
+        const expected =
+          sponsor.energy.current - interaction.appliedCost - DEFAULT_PROTOCOL_CONFIG.agentPostCost;
+        expect(service.getUser(sponsor.id, now).energy.current).toBeCloseTo(expected, 6);
+        // The agent's own budget is untouched: the human pays.
+        expect(service.getAgent(agent.id, now).energy.current).toBe(agent.energy.current);
+
+        expect(() => service.createVouch({ fromActorId: agent.id, toActorId: author.id })).toThrow(
+          "Sponsored agents cannot vouch."
+        );
+        expect(() =>
+          service.createAbuseReport({
+            reporterActorId: agent.id,
+            targetActorId: author.id,
+            severity: 2
+          })
+        ).toThrow("Sponsored agents cannot file abuse reports.");
+      } finally {
+        close();
+      }
+    });
+
+    test("sponsor shares liability, is capped, and can disable an agent", () => {
+      const { service, close } = createService();
+      try {
+        const now = 1000;
+        const sponsor = service.createUser({ handle: "sponsor", now });
+        const other = service.createUser({ handle: "other", now });
+        const agents = [1, 2, 3].map((index) =>
+          service.createSponsoredAgent({ sponsorId: sponsor.id, handle: `bot_${index}`, now })
+        );
+
+        expect(() =>
+          service.createSponsoredAgent({ sponsorId: sponsor.id, handle: "bot_4", now })
+        ).toThrow("at most 3 active agents");
+        expect(() =>
+          service.createSponsoredAgent({ sponsorId: agents[0]!.id, handle: "nested", now })
+        ).toThrow("Only human users can sponsor agents.");
+
+        service.createAbuseReport({
+          reporterActorId: other.id,
+          targetActorId: agents[0]!.id,
+          severity: 5,
+          now
+        });
+        expect(service.getUser(sponsor.id, now).trustScore).toBeLessThan(sponsor.trustScore);
+
+        expect(() => service.disableAgent({ sponsorId: other.id, agentId: agents[0]!.id })).toThrow(
+          "Only the sponsor"
+        );
+        const disabled = service.disableAgent({
+          sponsorId: sponsor.id,
+          agentId: agents[0]!.id,
+          now
+        });
+        expect(disabled.disabledAt).toBe(now);
+        expect(service.getAgent(agents[0]!.id, now).disabledAt).toBe(now);
+        expect(() =>
+          service.createContent({ authorId: agents[0]!.id, body: "still here?", now })
+        ).toThrow("has been disabled");
+
+        // Disabling frees a slot, and does not wash away the sponsor's liability.
+        const trustAfterDisable = service.getUser(sponsor.id, now).trustScore;
+        service.createSponsoredAgent({ sponsorId: sponsor.id, handle: "bot_4", now });
+        service.createVouch({ fromActorId: other.id, toActorId: sponsor.id, stake: 1, now });
+        const clean = service.createUser({ handle: "clean", now });
+        service.createVouch({ fromActorId: other.id, toActorId: clean.id, stake: 1, now });
+        expect(trustAfterDisable).toBeLessThan(sponsor.trustScore);
+        expect(service.getUser(sponsor.id, now).trustScore).toBeLessThan(
+          service.getUser(clean.id, now).trustScore
+        );
+      } finally {
+        close();
+      }
+    });
+
     test("vouching updates recipient trust and records vouch stats", () => {
       const { service, close } = createService();
       try {
