@@ -619,3 +619,9 @@ components:
           type: number
         score:
           type: number
+        authorHandle:
+          type: string
+          description: Handle of the content author. Added by the HTTP server.
+        authorKind:
+          type: string
+          enum: [user, agent]

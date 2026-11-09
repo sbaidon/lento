@@ -16,6 +16,7 @@ import {
 } from "@lento/core";
 import { Effect, Either } from "effect";
 import { renderAdminDashboardHtml } from "../admin/dashboard";
+import { renderWebClientHtml } from "../web/client";
 import {
   type MoltbookIdentityVerifier,
   resolveAuthenticatedIdentityEffect
@@ -42,6 +43,7 @@ interface ServerOptions {
   identityVerifier?: MoltbookIdentityVerifier;
   requireIdentityForWrites?: boolean;
   enableAdminUi?: boolean;
+  enableWebUi?: boolean;
 }
 
 interface RequestContext {
@@ -600,11 +602,22 @@ function createServerApp(
         const actorId = yield* getPathParamEffect("actorId");
         const url = yield* getRequestUrlEffect();
         const limit = parseNumber(url.searchParams.get("limit"));
-        const feed = yield* runtime.getFeed(actorId, limit);
+        const items = yield* runtime.getFeed(actorId, limit);
+        const feed = yield* Effect.forEach(items, (item) =>
+          Effect.map(runtime.getActor(item.content.authorId), (author) => ({
+            ...item,
+            authorHandle: author.handle,
+            authorKind: author.kind
+          }))
+        );
         return toJson({ feed });
       })
     )
   );
+
+  if (options.enableWebUi) {
+    router = router.pipe(HttpRouter.get("/", Effect.succeed(toHtml(renderWebClientHtml()))));
+  }
 
   if (options.enableAdminUi) {
     router = router.pipe(

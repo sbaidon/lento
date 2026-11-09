@@ -11,6 +11,7 @@ export interface ServerRuntimeConfig {
   secret: string;
   requireIdentityForWrites: boolean;
   enableAdminUi: boolean;
+  enableWebUi: boolean;
 }
 
 function parsePort(raw: string | undefined): number {
@@ -64,7 +65,8 @@ export function loadServerRuntimeConfig(
       databasePath: env.LENTO_DATABASE_PATH,
       secret: env.LENTO_SERVER_SECRET ?? DEFAULT_PROTOCOL_CONFIG.serverSecret,
       requireIdentityForWrites: parseBoolean(env.LENTO_REQUIRE_IDENTITY_FOR_WRITES),
-      enableAdminUi: parseBoolean(env.LENTO_ENABLE_ADMIN_UI)
+      enableAdminUi: parseBoolean(env.LENTO_ENABLE_ADMIN_UI),
+      enableWebUi: parseBoolean(env.LENTO_ENABLE_WEB_UI)
     }),
     catch: (error) => (error instanceof Error ? error : new Error(String(error)))
   });

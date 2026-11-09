@@ -14,7 +14,8 @@ describe("loadServerRuntimeConfig", () => {
         LENTO_DATABASE_PATH: "./data/lento.sqlite",
         LENTO_SERVER_SECRET: "secret-1",
         LENTO_REQUIRE_IDENTITY_FOR_WRITES: "true",
-        LENTO_ENABLE_ADMIN_UI: "true"
+        LENTO_ENABLE_ADMIN_UI: "true",
+        LENTO_ENABLE_WEB_UI: "true"
       })
     );
 
@@ -27,7 +28,8 @@ describe("loadServerRuntimeConfig", () => {
       databasePath: "./data/lento.sqlite",
       secret: "secret-1",
       requireIdentityForWrites: true,
-      enableAdminUi: true
+      enableAdminUi: true,
+      enableWebUi: true
     });
   });
 

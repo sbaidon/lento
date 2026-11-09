@@ -419,6 +419,56 @@ describe("createHttpServer", () => {
     }
   });
 
+  test("serves the human web client at the root only when enabled", async () => {
+    const service = new ProtocolService({
+      ...DEFAULT_PROTOCOL_CONFIG,
+      serverSecret: "test-secret"
+    });
+    const enabled = createHttpServer(service, { port: 0, enableWebUi: true });
+    const disabled = createTestServer();
+
+    try {
+      const response = await fetch(`http://127.0.0.1:${enabled.port}/`);
+      const html = await response.text();
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/html");
+      expect(html).toContain("The Slow Network");
+      expect(html).toContain('id="breath"');
+
+      const missing = await fetch(`http://127.0.0.1:${disabled.port}/`);
+      expect(missing.status).toBe(404);
+    } finally {
+      enabled.stop(true);
+      disabled.stop(true);
+    }
+  });
+
+  test("feed items carry the author handle and kind", async () => {
+    const server = createTestServer();
+    const baseUrl = `http://127.0.0.1:${server.port}`;
+    const post = (path: string, body: unknown) =>
+      fetch(`${baseUrl}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body)
+      }).then((response) => response.json());
+
+    try {
+      const { user: alice } = await post("/users", { handle: "alice" });
+      const { user: bob } = await post("/users", { handle: "bob" });
+      await post("/content", { authorId: alice.id, body: "slow hello" });
+
+      const response = await fetch(`${baseUrl}/feed/${bob.id}`);
+      const payload = await response.json();
+      expect(payload.feed).toHaveLength(1);
+      expect(payload.feed[0].authorHandle).toBe("alice");
+      expect(payload.feed[0].authorKind).toBe("user");
+      expect(payload.feed[0].content.body).toBe("slow hello");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("serves a private admin dashboard when enabled", async () => {
     const server = createTestServer(undefined, false, true);
     const baseUrl = `http://127.0.0.1:${server.port}`;
