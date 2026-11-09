@@ -60,6 +60,24 @@ bun run cli -- feed usr_example 20
 bun run cli:tui -- --url http://localhost:3000
 ```
 
+## Web Client
+
+A minimal human client: pick a handle, post, and react, with every action gated by the Breath (breathe in, breathe out, tap when the circle glows). Disabled by default.
+
+```bash
+export LENTO_ENABLE_WEB_UI=true
+export LENTO_DATABASE_PATH=./.lento/data/lento.sqlite
+
+bun run start
+open http://localhost:3000/
+```
+
+Current limits, so nobody is surprised:
+
+- It uses local users (`POST /users`), which have no authentication. Do not expose it publicly as is.
+- It does not work with `LENTO_REQUIRE_IDENTITY_FOR_WRITES=true`, since that mode disables local users.
+- The Breath is enforced in the browser only. Server-side challenge and commitment is not implemented yet.
+
 ## Internal Dashboard
 
 Private admin UI for local inspection. Disabled by default.

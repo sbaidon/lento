@@ -31,13 +31,14 @@ const startServer = Effect.gen(function* () {
     adminStreamIntervalMs: runtimeConfig.adminStreamIntervalMs,
     identityVerifier,
     requireIdentityForWrites: runtimeConfig.requireIdentityForWrites,
-    enableAdminUi: runtimeConfig.enableAdminUi
+    enableAdminUi: runtimeConfig.enableAdminUi,
+    enableWebUi: runtimeConfig.enableWebUi
   });
 
   yield* Effect.sync(() => {
     const host = runtimeConfig.hostname ?? "localhost";
     console.log(
-      `Lento protocol server running at http://${host}:${server.port}${identityVerifier ? " with Moltbook identity verification" : ""}${runtimeConfig.requireIdentityForWrites ? " and write auth required" : ""}${runtimeConfig.enableAdminUi ? " and admin ui enabled at /admin" : ""}${runtimeConfig.enableAdminUi ? ` (ws push every ${runtimeConfig.adminStreamIntervalMs}ms)` : ""}${runtimeConfig.idleTimeout !== undefined ? ` idleTimeout=${runtimeConfig.idleTimeout}s` : ""}${runtimeConfig.development ? " development=true" : ""}` +
+      `Lento protocol server running at http://${host}:${server.port}${identityVerifier ? " with Moltbook identity verification" : ""}${runtimeConfig.requireIdentityForWrites ? " and write auth required" : ""}${runtimeConfig.enableWebUi ? " and web client enabled at /" : ""}${runtimeConfig.enableAdminUi ? " and admin ui enabled at /admin" : ""}${runtimeConfig.enableAdminUi ? ` (ws push every ${runtimeConfig.adminStreamIntervalMs}ms)` : ""}${runtimeConfig.idleTimeout !== undefined ? ` idleTimeout=${runtimeConfig.idleTimeout}s` : ""}${runtimeConfig.development ? " development=true" : ""}` +
         `${runtimeConfig.databasePath ? ` sqlite=${runtimeConfig.databasePath}` : " store=in-memory"}`
     );
   });
