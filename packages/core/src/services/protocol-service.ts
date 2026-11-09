@@ -36,6 +36,18 @@ interface RegisterAgentInput {
   now?: number;
 }
 
+interface CreateSponsoredAgentInput {
+  sponsorId: UserId;
+  handle: string;
+  now?: number;
+}
+
+interface DisableAgentInput {
+  sponsorId: UserId;
+  agentId: ActorId;
+  now?: number;
+}
+
 interface CreateContentInput {
   authorId: ActorId;
   body: string;
@@ -166,6 +178,76 @@ export class ProtocolService {
     });
   }
 
+  /**
+   * Creates an agent that a human user answers for. The sponsor pays the
+   * agent's energy costs and shares liability for abuse reports against it.
+   */
+  createSponsoredAgent(input: CreateSponsoredAgentInput): Agent {
+    return this.store.transaction(() => {
+      const now = input.now ?? Date.now();
+      const sponsor = this.requireSponsor(input.sponsorId);
+      const handle = this.normalizeHandle(input.handle);
+      this.assertHandleAvailable(handle);
+
+      const active = this.listAgentsBySponsor(sponsor.id).filter((agent) => !agent.disabledAt);
+      if (active.length >= this.config.maxAgentsPerSponsor) {
+        throw new ProtocolError(
+          "agent_limit_reached",
+          409,
+          `A sponsor can run at most ${this.config.maxAgentsPerSponsor} active agents.`
+        );
+      }
+
+      const id = createId("agt");
+      const identity = { provider: "lento" as const, id, name: handle };
+      const agent: Agent = {
+        id,
+        kind: "agent",
+        handle,
+        trustScore: this.trustEngine.initialScore,
+        createdAt: now,
+        verifiedAt: now,
+        identity,
+        sponsorId: sponsor.id,
+        energy: this.energyEngine.createInitial(this.trustEngine.initialScore, now),
+        stats: createActorStats()
+      };
+
+      this.store.saveAgent(agent);
+      this.store.setActorHandle(handle, agent.id);
+      this.store.setAgentIdentity(identity, agent.id);
+
+      return agent;
+    });
+  }
+
+  listSponsoredAgents(sponsorId: UserId): Agent[] {
+    this.requireUser(sponsorId);
+    return this.listAgentsBySponsor(sponsorId).sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  /** Switches a sponsored agent off for good. Only its sponsor may do this. */
+  disableAgent(input: DisableAgentInput): Agent {
+    return this.store.transaction(() => {
+      const now = input.now ?? Date.now();
+      const agent = this.requireAgent(input.agentId);
+      if (!agent.sponsorId || agent.sponsorId !== input.sponsorId) {
+        throw new ProtocolError(
+          "not_sponsor",
+          403,
+          `Only the sponsor of agent '${agent.id}' can disable it.`
+        );
+      }
+
+      if (!agent.disabledAt) {
+        agent.disabledAt = now;
+        this.store.saveAgent(agent);
+      }
+
+      return agent;
+    });
+  }
+
   getUser(userId: UserId, now = Date.now()): User {
     const user = this.requireUser(userId);
     this.refreshActorEnergy(user, now);
@@ -200,10 +282,19 @@ export class ProtocolService {
     return this.store.transaction(() => {
       const now = input.now ?? Date.now();
       const author = this.requireActor(input.authorId);
+      this.assertCanWrite(author);
       this.refreshActorEnergy(author, now);
       this.saveActor(author);
 
       const body = this.contentPolicy.validateBody(input.body);
+
+      // Human posts are free. A sponsored agent's posts are paid by its sponsor.
+      const sponsor = this.findSponsor(author, now);
+      if (sponsor) {
+        sponsor.energy = this.energyEngine.spend(sponsor.energy, this.config.agentPostCost, now);
+        this.saveActor(sponsor);
+      }
+
       const content: ContentItem = {
         id: createId("cnt"),
         authorId: author.id,
@@ -240,6 +331,10 @@ export class ProtocolService {
 
       const fromActor = this.requireActor(input.fromActorId);
       const toActor = this.requireActor(input.toActorId);
+      this.assertCanWrite(fromActor);
+      if (fromActor.kind === "agent" && fromActor.sponsorId) {
+        throw new ProtocolError("agent_cannot_vouch", 403, "Sponsored agents cannot vouch.");
+      }
       this.refreshActorEnergy(fromActor, now);
       this.refreshActorEnergy(toActor, now);
 
@@ -268,8 +363,16 @@ export class ProtocolService {
     return this.store.transaction(() => {
       const now = input.now ?? Date.now();
 
-      this.requireActor(input.reporterActorId);
+      const reporter = this.requireActor(input.reporterActorId);
       const target = this.requireActor(input.targetActorId);
+      this.assertCanWrite(reporter);
+      if (reporter.kind === "agent" && reporter.sponsorId) {
+        throw new ProtocolError(
+          "agent_cannot_report",
+          403,
+          "Sponsored agents cannot file abuse reports."
+        );
+      }
 
       const severity = this.normalizeSeverity(input.severity);
       const report: AbuseReport = {
@@ -284,6 +387,12 @@ export class ProtocolService {
       this.saveActor(target);
 
       const trustScore = this.recomputeTrust(target.id, now);
+
+      // The human behind a sponsored agent answers for it.
+      if (target.kind === "agent" && target.sponsorId) {
+        this.recomputeTrust(target.sponsorId, now);
+      }
+
       return { report, trustScore };
     });
   }
@@ -292,8 +401,10 @@ export class ProtocolService {
     return this.store.transaction(() => {
       const now = input.now ?? Date.now();
       const actor = this.requireActor(input.actorId);
+      this.assertCanWrite(actor);
       const target = this.getContent(input.targetContentId);
       this.refreshActorEnergy(actor, now);
+      const sponsor = this.findSponsor(actor, now);
 
       const clientNonce = input.clientNonce ?? createId("nonce");
       const cost = this.lentoCostEngine.calculate({
@@ -305,7 +416,12 @@ export class ProtocolService {
         at: now
       });
 
-      actor.energy = this.energyEngine.spend(actor.energy, cost.cost, now);
+      if (sponsor) {
+        sponsor.energy = this.energyEngine.spend(sponsor.energy, cost.cost, now);
+        this.saveActor(sponsor);
+      } else {
+        actor.energy = this.energyEngine.spend(actor.energy, cost.cost, now);
+      }
       actor.stats.interactions += 1;
       actor.trustScore = this.trustEngine.adjustOnSuccessfulInteraction(actor.trustScore);
       actor.energy = this.energyEngine.rebalanceForTrust(actor.energy, actor.trustScore, now);
@@ -425,10 +541,21 @@ export class ProtocolService {
       };
     });
 
-    const abuseSeverityTotal = this.store
-      .listAbuseReports()
+    const reports = this.store.listAbuseReports();
+    const ownSeverity = reports
       .filter((report) => report.targetActorId === actor.id)
       .reduce((total, report) => total + report.severity, 0);
+
+    // Reports against a human's sponsored agents count against the human too,
+    // including agents that were disabled afterwards.
+    const sponsoredIds =
+      actor.kind === "user"
+        ? new Set(this.listAgentsBySponsor(actor.id).map((agent) => agent.id))
+        : new Set<string>();
+    const sponsoredSeverity = reports
+      .filter((report) => sponsoredIds.has(report.targetActorId))
+      .reduce((total, report) => total + report.severity, 0);
+    const abuseSeverityTotal = ownSeverity + sponsoredSeverity * this.config.sponsorLiabilityWeight;
 
     const computed = this.trustEngine.computeFromSignals(incomingSignals, abuseSeverityTotal);
     actor.trustScore = this.trustEngine.reconcile(actor.trustScore, computed);
@@ -436,6 +563,35 @@ export class ProtocolService {
     this.saveActor(actor);
 
     return actor.trustScore;
+  }
+
+  private listAgentsBySponsor(sponsorId: UserId): Agent[] {
+    return this.store.listAgents().filter((agent) => agent.sponsorId === sponsorId);
+  }
+
+  private requireSponsor(sponsorId: UserId): User {
+    const actor = this.requireActor(sponsorId);
+    if (actor.kind !== "user") {
+      throw new ProtocolError("sponsor_must_be_human", 403, "Only human users can sponsor agents.");
+    }
+    return actor;
+  }
+
+  /** Returns the paying sponsor for a sponsored agent, with energy refreshed. */
+  private findSponsor(actor: Actor, now = Date.now()): User | undefined {
+    if (actor.kind !== "agent" || !actor.sponsorId) {
+      return undefined;
+    }
+
+    const sponsor = this.requireUser(actor.sponsorId);
+    this.refreshActorEnergy(sponsor, now);
+    return sponsor;
+  }
+
+  private assertCanWrite(actor: Actor): void {
+    if (actor.kind === "agent" && actor.disabledAt) {
+      throw new ProtocolError("agent_disabled", 403, `Agent '${actor.id}' has been disabled.`);
+    }
   }
 
   private refreshActorEnergy(actor: Actor, now: number): void {

@@ -85,6 +85,19 @@ describe("LentoApiClient", () => {
     expect(calls[0]).toBe("http://localhost:3000/feed/usr_42?limit=15");
   });
 
+  test("sends the actor key as a bearer token when configured", async () => {
+    const seen: Array<string | null> = [];
+    const fetcher = stubFetch(async (_input, init) => {
+      seen.push(new Headers(init?.headers).get("authorization"));
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    await new LentoApiClient("http://localhost:3000", { fetcher, actorKey: "lento_a.b" }).health();
+    await new LentoApiClient("http://localhost:3000", fetcher).withActorKey("lento_c.d").health();
+
+    expect(seen).toEqual(["Bearer lento_a.b", "Bearer lento_c.d"]);
+  });
+
   test("sends moltbook identity token when configured", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher = stubFetch(async (input, init) => {

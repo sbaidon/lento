@@ -37,11 +37,13 @@ interface ActorRow {
   stats_vouches_given: number;
   stats_vouches_received: number;
   verified_at: number | null;
+  sponsor_id: string | null;
+  disabled_at: number | null;
 }
 
 interface AgentIdentityRow {
   actor_id: string;
-  provider: "moltbook";
+  provider: "moltbook" | "lento";
   external_id: string;
   name: string;
   description: string | null;
@@ -276,6 +278,8 @@ export class SqliteStore implements ProtocolStore {
       trustScore: actorRow.trust_score,
       createdAt: actorRow.created_at,
       verifiedAt: actorRow.verified_at ?? actorRow.created_at,
+      sponsorId: actorRow.sponsor_id ?? undefined,
+      disabledAt: actorRow.disabled_at ?? undefined,
       energy: toEnergyState(actorRow),
       stats: toActorStats(actorRow),
       identity: toIdentity(identityRow)
@@ -290,8 +294,8 @@ export class SqliteStore implements ProtocolStore {
             id, kind, handle, trust_score, created_at,
             energy_current, energy_max, energy_regen_per_hour, energy_updated_at,
             stats_interactions, stats_abuse_reports, stats_vouches_given, stats_vouches_received,
-            verified_at
-          ) values (?1, 'agent', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            verified_at, sponsor_id, disabled_at
+          ) values (?1, 'agent', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
           on conflict(id) do update set
             handle = excluded.handle,
             trust_score = excluded.trust_score,
@@ -304,7 +308,9 @@ export class SqliteStore implements ProtocolStore {
             stats_abuse_reports = excluded.stats_abuse_reports,
             stats_vouches_given = excluded.stats_vouches_given,
             stats_vouches_received = excluded.stats_vouches_received,
-            verified_at = excluded.verified_at
+            verified_at = excluded.verified_at,
+            sponsor_id = excluded.sponsor_id,
+            disabled_at = excluded.disabled_at
         `
       )
       .run(
@@ -320,7 +326,9 @@ export class SqliteStore implements ProtocolStore {
         agent.stats.abuseReports,
         agent.stats.vouchesGiven,
         agent.stats.vouchesReceived,
-        agent.verifiedAt
+        agent.verifiedAt,
+        agent.sponsorId ?? null,
+        agent.disabledAt ?? null
       );
 
     this.db
@@ -393,6 +401,8 @@ export class SqliteStore implements ProtocolStore {
         trustScore: row.trust_score,
         createdAt: row.created_at,
         verifiedAt: row.verified_at ?? row.created_at,
+        sponsorId: row.sponsor_id ?? undefined,
+        disabledAt: row.disabled_at ?? undefined,
         energy: toEnergyState(row),
         stats: toActorStats(row),
         identity: toIdentity(identityRow)
@@ -742,5 +752,18 @@ export class SqliteStore implements ProtocolStore {
       create index if not exists idx_interactions_actor_created_at on interactions(actor_id, created_at desc);
       create index if not exists idx_interactions_content_created_at on interactions(target_content_id, created_at desc);
     `);
+
+    // Columns added after the first public alpha. Databases created before
+    // then are upgraded in place.
+    this.ensureColumn("actors", "sponsor_id", "text references actors(id) on delete restrict");
+    this.ensureColumn("actors", "disabled_at", "integer");
+    this.db.exec("create index if not exists idx_actors_sponsor_id on actors(sponsor_id)");
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.db.query<{ name: string }, []>(`pragma table_info(${table})`).all();
+    if (!columns.some((entry) => entry.name === column)) {
+      this.db.exec(`alter table ${table} add column ${column} ${definition}`);
+    }
   }
 }

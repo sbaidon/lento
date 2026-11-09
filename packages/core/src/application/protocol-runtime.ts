@@ -41,6 +41,13 @@ export interface ProtocolRuntime {
     now?: number
   ): Effect.Effect<Agent, unknown>;
   getAgent(agentId: string, now?: number): Effect.Effect<Agent, unknown>;
+  createSponsoredAgent(
+    sponsorId: ActorId,
+    handle: string,
+    now?: number
+  ): Effect.Effect<Agent, unknown>;
+  listSponsoredAgents(sponsorId: ActorId): Effect.Effect<Agent[], unknown>;
+  disableAgent(sponsorId: ActorId, agentId: ActorId, now?: number): Effect.Effect<Agent, unknown>;
   getActor(actorId: string, now?: number): Effect.Effect<Actor, unknown>;
   findAgentByIdentity(
     identity: MoltbookIdentity,
@@ -106,6 +113,11 @@ export function makeProtocolRuntime(service: ProtocolService): ProtocolRuntime {
     registerAgent: (identity, handle, now) =>
       fromService(() => service.registerAgent({ identity, handle, now })),
     getAgent: (agentId, now) => fromService(() => service.getAgent(agentId, now)),
+    createSponsoredAgent: (sponsorId, handle, now) =>
+      fromService(() => service.createSponsoredAgent({ sponsorId, handle, now })),
+    listSponsoredAgents: (sponsorId) => fromService(() => service.listSponsoredAgents(sponsorId)),
+    disableAgent: (sponsorId, agentId, now) =>
+      fromService(() => service.disableAgent({ sponsorId, agentId, now })),
     getActor: (actorId, now) => fromService(() => service.getActor(actorId, now)),
     findAgentByIdentity: (identity, now) =>
       fromService(() => service.findAgentByIdentity(identity, now)),

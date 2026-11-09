@@ -204,7 +204,11 @@ export function renderWebClientHtml(): string {
 
       .post-author { font-family: var(--mono); font-size: 13px; }
 
+      .post-head { flex-wrap: wrap; }
+
       .post-author .kind {
+        display: inline-block;
+        white-space: nowrap;
         margin-left: 6px;
         padding: 1px 6px;
         border: 1px solid var(--line);
@@ -238,6 +242,40 @@ export function renderWebClientHtml(): string {
       }
 
       .chip:hover { border-color: var(--ink); }
+
+      .agents-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+
+      .agents-note { margin: 4px 0 12px; color: var(--ink-soft); font-size: 15px; }
+
+      .agent-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 10px 0;
+        border-top: 1px solid var(--line);
+        font-family: var(--mono);
+        font-size: 13px;
+      }
+
+      .agent-row.off { color: var(--ink-faint); text-decoration: line-through; }
+
+      .key-box {
+        margin-top: 12px;
+        padding: 12px;
+        border: 1px dashed var(--signal);
+        border-radius: 14px;
+        background: rgba(215, 79, 42, 0.06);
+      }
+
+      .key-box code {
+        display: block;
+        margin: 8px 0;
+        font-family: var(--mono);
+        font-size: 12px;
+        overflow-wrap: anywhere;
+        user-select: all;
+      }
 
       .empty { text-align: center; color: var(--ink-soft); padding: 34px 18px; font-style: italic; }
 
@@ -376,6 +414,39 @@ export function renderWebClientHtml(): string {
           <p id="compose-error" class="error" role="alert"></p>
         </form>
 
+        <section class="panel" aria-labelledby="agents-title">
+          <div class="agents-head">
+            <span class="label" id="agents-title">Your agents</span>
+            <span class="meta" id="agents-count"></span>
+          </div>
+          <p class="agents-note">
+            Agents are welcome, but you answer for them. They spend your energy, and reports
+            against them count against you.
+          </p>
+          <div id="agents"></div>
+          <form id="agent-form" class="row" autocomplete="off" style="margin-top: 12px">
+            <input
+              id="agent-handle"
+              class="field"
+              placeholder="agent_handle"
+              aria-label="Agent handle"
+              minlength="3"
+              maxlength="32"
+              pattern="[A-Za-z0-9_]{3,32}"
+              autocapitalize="none"
+              spellcheck="false"
+              required
+            />
+            <button class="btn ghost" type="submit">Sponsor</button>
+          </form>
+          <p id="agent-error" class="error" role="alert"></p>
+          <div id="agent-key" class="key-box" hidden>
+            <span class="label">Key for <span id="agent-key-handle"></span>. Save it now.</span>
+            <code id="agent-key-value"></code>
+            <span class="hint">Your agent sends it as "Authorization: Bearer &lt;key&gt;".</span>
+          </div>
+        </section>
+
         <div class="feed-head">
           <span class="label">Feed</span>
           <button id="refresh" class="chip" type="button">Refresh</button>
@@ -397,7 +468,7 @@ export function renderWebClientHtml(): string {
       (function () {
         "use strict";
 
-        var STORAGE_KEY = "lento.userId";
+        var STORAGE_KEY = "lento.session";
         var INHALE_MS = 3200;
         var READY_MIN_MS = 500;
         var READY_MAX_MS = 2600;
@@ -407,7 +478,7 @@ export function renderWebClientHtml(): string {
           { kind: "share", label: "Share" }
         ];
 
-        var state = { user: null, breath: null, toastTimer: null };
+        var state = { user: null, key: null, breath: null, toastTimer: null };
 
         function $(id) { return document.getElementById(id); }
 
@@ -418,19 +489,26 @@ export function renderWebClientHtml(): string {
           return node;
         }
 
-        function readStoredId() {
-          try { return window.localStorage.getItem(STORAGE_KEY); } catch (_error) { return null; }
+        // The session is { id, key }. The key is the actor key issued at signup.
+        // It is absent only when the server runs without actor keys.
+        function readSession() {
+          try {
+            var raw = window.localStorage.getItem(STORAGE_KEY);
+            var parsed = raw ? JSON.parse(raw) : null;
+            return parsed && typeof parsed.id === "string" ? parsed : null;
+          } catch (_error) { return null; }
         }
 
-        function storeId(id) {
+        function storeSession(session) {
           try {
-            if (id) { window.localStorage.setItem(STORAGE_KEY, id); }
+            if (session) { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session)); }
             else { window.localStorage.removeItem(STORAGE_KEY); }
           } catch (_error) { /* storage unavailable: session lasts until reload */ }
         }
 
         function api(method, path, body) {
           var init = { method: method, headers: {} };
+          if (state.key) { init.headers["authorization"] = "Bearer " + state.key; }
           if (body !== undefined) {
             init.headers["content-type"] = "application/json";
             init.body = JSON.stringify(body);
@@ -593,7 +671,15 @@ export function renderWebClientHtml(): string {
             var post = el("article", "panel post");
             var head = el("div", "post-head");
             var author = el("span", "post-author", "@" + (item.authorHandle || item.content.authorId));
-            if (item.authorKind === "agent") { author.appendChild(el("span", "kind", "agent")); }
+            if (item.authorKind === "agent") {
+              author.appendChild(
+                el(
+                  "span",
+                  "kind",
+                  item.authorSponsorHandle ? "agent of @" + item.authorSponsorHandle : "agent"
+                )
+              );
+            }
             head.appendChild(author);
             head.appendChild(
               el(
@@ -620,7 +706,41 @@ export function renderWebClientHtml(): string {
           });
         }
 
+        function renderAgents(agents) {
+          var list = $("agents");
+          list.textContent = "";
+          var active = agents.filter(function (agent) { return !agent.disabledAt; });
+          $("agents-count").textContent = active.length ? active.length + " active" : "";
+
+          agents.forEach(function (agent) {
+            var row = el("div", "agent-row" + (agent.disabledAt ? " off" : ""));
+            row.appendChild(el("span", "", "@" + agent.handle));
+            if (agent.disabledAt) {
+              row.appendChild(el("span", "meta", "disabled"));
+            } else {
+              var off = el("button", "chip", "Disable");
+              off.type = "button";
+              off.addEventListener("click", function () { disableAgent(agent); });
+              row.appendChild(off);
+            }
+            list.appendChild(row);
+          });
+        }
+
         /* ---- Actions --------------------------------------------------- */
+
+        function refreshAgents() {
+          return api("GET", "/agents?sponsorId=" + encodeURIComponent(state.user.id)).then(
+            function (data) { renderAgents(data.agents || []); }
+          );
+        }
+
+        function disableAgent(agent) {
+          api("POST", "/agents/" + encodeURIComponent(agent.id) + "/disable").then(function () {
+            toast("@" + agent.handle + " is off for good.");
+            return refreshAgents();
+          }).catch(function (error) { toast(error.message); });
+        }
 
         function refreshMe() {
           return api("GET", "/users/" + encodeURIComponent(state.user.id)).then(function (data) {
@@ -636,8 +756,8 @@ export function renderWebClientHtml(): string {
         }
 
         function refreshAll() {
-          return Promise.all([refreshMe(), refreshFeed()]).catch(function (error) {
-            if (error.status === 404) { leave(); return; }
+          return Promise.all([refreshMe(), refreshFeed(), refreshAgents()]).catch(function (error) {
+            if (error.status === 404 || error.status === 401) { leave(); return; }
             toast(error.message);
           });
         }
@@ -676,8 +796,10 @@ export function renderWebClientHtml(): string {
         }
 
         function leave() {
-          storeId(null);
+          storeSession(null);
           state.user = null;
+          state.key = null;
+          $("agent-key").hidden = true;
           showWelcome();
         }
 
@@ -687,11 +809,26 @@ export function renderWebClientHtml(): string {
           $("join-error").textContent = "";
           api("POST", "/users", { handle: handle }).then(function (data) {
             state.user = data.user;
-            storeId(data.user.id);
+            state.key = data.key || null;
+            storeSession({ id: data.user.id, key: state.key });
             showHome();
-            return refreshFeed();
+            return refreshAll();
           }).catch(function (error) {
             $("join-error").textContent = error.message;
+          });
+        });
+
+        $("agent-form").addEventListener("submit", function (event) {
+          event.preventDefault();
+          $("agent-error").textContent = "";
+          api("POST", "/agents", { handle: $("agent-handle").value.trim() }).then(function (data) {
+            $("agent-handle").value = "";
+            $("agent-key-handle").textContent = "@" + data.agent.handle;
+            $("agent-key-value").textContent = data.key;
+            $("agent-key").hidden = false;
+            return refreshAgents();
+          }).catch(function (error) {
+            $("agent-error").textContent = error.message;
           });
         });
 
@@ -727,14 +864,21 @@ export function renderWebClientHtml(): string {
 
         /* ---- Boot ------------------------------------------------------ */
 
-        var storedId = readStoredId();
-        if (!storedId) {
+        var session = readSession();
+        if (!session) {
           showWelcome();
         } else {
-          api("GET", "/users/" + encodeURIComponent(storedId)).then(function (data) {
-            state.user = data.user;
+          state.key = session.key || null;
+          // With a key, /me also proves the key is still valid.
+          var lookup = state.key
+            ? api("GET", "/me").then(function (data) { return data.actor; })
+            : api("GET", "/users/" + encodeURIComponent(session.id)).then(function (data) {
+                return data.user;
+              });
+          lookup.then(function (user) {
+            state.user = user;
             showHome();
-            return refreshFeed();
+            return refreshAll();
           }).catch(function () { leave(); });
         }
       })();

@@ -17,10 +17,13 @@ import {
 import { Effect, Either } from "effect";
 import { renderAdminDashboardHtml } from "../admin/dashboard";
 import { renderWebClientHtml } from "../web/client";
+import { issueActorKey, readBearerToken, verifyActorKey } from "./actor-keys";
 import {
   type MoltbookIdentityVerifier,
   resolveAuthenticatedIdentityEffect
 } from "./moltbook-identity";
+
+export { ACTOR_KEY_PREFIX, issueActorKey, verifyActorKey } from "./actor-keys";
 
 export {
   createIdentityVerifierFromConfig,
@@ -44,6 +47,11 @@ interface ServerOptions {
   requireIdentityForWrites?: boolean;
   enableAdminUi?: boolean;
   enableWebUi?: boolean;
+  /**
+   * Secret used to issue and verify Lento actor keys. When unset, actor keys
+   * are off: no key is returned on signup and bearer tokens are rejected.
+   */
+  actorKeySecret?: string;
 }
 
 interface RequestContext {
@@ -51,6 +59,8 @@ interface RequestContext {
   url: URL;
   authenticatedIdentity?: MoltbookIdentity;
   authenticatedAgent?: Agent;
+  /** Actor proven by a Lento actor key (`Authorization: Bearer lento_...`). */
+  keyActor?: Actor;
 }
 
 interface AdminTransportStats {
@@ -151,7 +161,9 @@ function mapActorSummary(actor: Actor) {
     createdAt: actor.createdAt,
     energy: actor.energy,
     stats: actor.stats,
-    identity: actor.kind === "agent" ? actor.identity : undefined
+    identity: actor.kind === "agent" ? actor.identity : undefined,
+    sponsorId: actor.kind === "agent" ? actor.sponsorId : undefined,
+    disabledAt: actor.kind === "agent" ? actor.disabledAt : undefined
   };
 }
 
@@ -175,22 +187,58 @@ function requireActorId(actorId: string | undefined, fieldName: string): string 
 
 function resolveActingActorId(
   actorId: string | undefined,
-  authenticatedAgent: Agent | undefined,
+  authenticatedActor: Actor | undefined,
   fieldName: string
 ): string {
-  if (!authenticatedAgent) {
+  if (!authenticatedActor) {
     return requireActorId(actorId, fieldName);
   }
 
-  if (actorId && actorId !== authenticatedAgent.id) {
+  if (actorId && actorId !== authenticatedActor.id) {
     throw new ProtocolError(
       "actor_forbidden",
       403,
-      `Authenticated agent '${authenticatedAgent.id}' cannot act as '${actorId}'.`
+      `Authenticated ${authenticatedActor.kind} '${authenticatedActor.id}' cannot act as '${actorId}'.`
     );
   }
 
-  return authenticatedAgent.id;
+  return authenticatedActor.id;
+}
+
+function resolveKeyActorEffect(
+  runtime: ReturnType<typeof makeProtocolRuntime>,
+  options: ServerOptions,
+  request: Request
+): Effect.Effect<Actor | undefined, unknown> {
+  const token = readBearerToken(request);
+  if (!token) {
+    return Effect.succeed(undefined);
+  }
+
+  const invalid = new ProtocolError("key_invalid", 401, "Actor key is not valid.");
+  const actorId = options.actorKeySecret
+    ? verifyActorKey(options.actorKeySecret, token)
+    : undefined;
+  if (!actorId) {
+    return Effect.fail(invalid);
+  }
+
+  // A valid signature for an actor that no longer exists is still a bad key.
+  return runtime.getActor(actorId).pipe(Effect.catchAll(() => Effect.fail(invalid)));
+}
+
+function requireKeyUserEffect(context: RequestContext): Effect.Effect<Actor, ProtocolError> {
+  if (!context.keyActor) {
+    return Effect.fail(
+      new ProtocolError("key_required", 401, "This route needs a human user's actor key.")
+    );
+  }
+
+  return context.keyActor.kind === "user"
+    ? Effect.succeed(context.keyActor)
+    : Effect.fail(
+        new ProtocolError("sponsor_must_be_human", 403, "Only human users can manage agents.")
+      );
 }
 
 function isWriteMethod(method: string): boolean {
@@ -222,10 +270,13 @@ function buildRequestContextEffect(
       verifier: options.identityVerifier
     });
 
+    const keyActor = yield* resolveKeyActorEffect(runtime, options, webRequest);
+
     if (
       options.requireIdentityForWrites &&
       isWriteMethod(request.method) &&
-      !authenticatedIdentity
+      !authenticatedIdentity &&
+      !keyActor
     ) {
       yield* Effect.fail(
         new ProtocolError(
@@ -244,9 +295,31 @@ function buildRequestContextEffect(
       request,
       url,
       authenticatedIdentity,
-      authenticatedAgent
+      authenticatedAgent,
+      keyActor
     };
   });
+}
+
+/**
+ * The actor a write request is authenticated as, if any. An actor key wins.
+ * Otherwise a verified external identity resolves to its bound agent.
+ */
+function resolveActingActorEffect(
+  runtime: ReturnType<typeof makeProtocolRuntime>,
+  context: RequestContext
+): Effect.Effect<Actor | undefined, unknown> {
+  if (context.keyActor) {
+    return Effect.succeed(context.keyActor);
+  }
+
+  return context.authenticatedIdentity
+    ? getOrRegisterAuthenticatedAgentEffect(
+        runtime,
+        context.authenticatedIdentity,
+        context.authenticatedAgent
+      )
+    : Effect.succeed(undefined);
 }
 
 function getOrRegisterAuthenticatedAgentEffect(
@@ -412,6 +485,54 @@ function createServerApp(
       })
     ),
     HttpRouter.get(
+      "/me",
+      Effect.gen(function* () {
+        const context = yield* buildRequestContextEffect(runtime, options);
+        const actor = yield* resolveActingActorEffect(runtime, context);
+        if (!actor) {
+          yield* Effect.fail(
+            new ProtocolError("key_required", 401, "Send an actor key to look up yourself.")
+          );
+        }
+        return toJson({ actor });
+      })
+    ),
+    HttpRouter.post(
+      "/agents",
+      Effect.gen(function* () {
+        const context = yield* buildRequestContextEffect(runtime, options);
+        const sponsor = yield* requireKeyUserEffect(context);
+        const body = yield* parseJsonEffect<{ handle: string }>();
+        const agent = yield* runtime.createSponsoredAgent(sponsor.id, body.handle);
+        yield* Effect.sync(() => adminHooks?.publishSnapshot());
+        // actorKeySecret is set here: requireKeyUserEffect only passes with a verified key.
+        const key = issueActorKey(options.actorKeySecret ?? "", agent.id);
+        return toJson({ agent, key }, 201);
+      })
+    ),
+    HttpRouter.get(
+      "/agents",
+      Effect.gen(function* () {
+        const url = yield* getRequestUrlEffect();
+        const sponsorId = yield* fromSync(() =>
+          requireActorId(url.searchParams.get("sponsorId") ?? undefined, "sponsorId")
+        );
+        const agents = yield* runtime.listSponsoredAgents(sponsorId);
+        return toJson({ agents });
+      })
+    ),
+    HttpRouter.post(
+      "/agents/:agentId/disable",
+      Effect.gen(function* () {
+        const context = yield* buildRequestContextEffect(runtime, options);
+        const sponsor = yield* requireKeyUserEffect(context);
+        const agentId = yield* getPathParamEffect("agentId");
+        const agent = yield* runtime.disableAgent(sponsor.id, agentId);
+        yield* Effect.sync(() => adminHooks?.publishSnapshot());
+        return toJson({ agent });
+      })
+    ),
+    HttpRouter.get(
       "/agents/me",
       Effect.gen(function* () {
         const context = yield* buildRequestContextEffect(runtime, options);
@@ -434,7 +555,9 @@ function createServerApp(
     HttpRouter.post(
       "/users",
       Effect.gen(function* () {
-        if (options.requireIdentityForWrites) {
+        // With identity-gated writes, signing up only makes sense when the
+        // server can hand the new user a key to authenticate with.
+        if (options.requireIdentityForWrites && !options.actorKeySecret) {
           yield* Effect.fail(
             new ProtocolError(
               "user_mode_disabled",
@@ -447,7 +570,10 @@ function createServerApp(
         const body = yield* parseJsonEffect<{ handle: string }>();
         const user = yield* runtime.createUser(body.handle);
         yield* Effect.sync(() => adminHooks?.publishSnapshot());
-        return toJson({ user }, 201);
+        const key = options.actorKeySecret
+          ? issueActorKey(options.actorKeySecret, user.id)
+          : undefined;
+        return toJson({ user, key }, 201);
       })
     ),
     HttpRouter.get(
@@ -467,13 +593,7 @@ function createServerApp(
           actorId?: string;
           body: string;
         }>();
-        const actingAgent = context.authenticatedIdentity
-          ? yield* getOrRegisterAuthenticatedAgentEffect(
-              runtime,
-              context.authenticatedIdentity,
-              context.authenticatedAgent
-            )
-          : undefined;
+        const actingAgent = yield* resolveActingActorEffect(runtime, context);
         const authorId = yield* fromSync(() =>
           resolveActingActorId(body.authorId ?? body.actorId, actingAgent, "authorId")
         );
@@ -511,13 +631,7 @@ function createServerApp(
           toUserId?: string;
           stake?: number;
         }>();
-        const actingAgent = context.authenticatedIdentity
-          ? yield* getOrRegisterAuthenticatedAgentEffect(
-              runtime,
-              context.authenticatedIdentity,
-              context.authenticatedAgent
-            )
-          : undefined;
+        const actingAgent = yield* resolveActingActorEffect(runtime, context);
         const fromActorId = yield* fromSync(() =>
           resolveActingActorId(body.fromActorId ?? body.fromUserId, actingAgent, "fromActorId")
         );
@@ -540,13 +654,7 @@ function createServerApp(
           targetUserId?: string;
           severity: 1 | 2 | 3 | 4 | 5;
         }>();
-        const actingAgent = context.authenticatedIdentity
-          ? yield* getOrRegisterAuthenticatedAgentEffect(
-              runtime,
-              context.authenticatedIdentity,
-              context.authenticatedAgent
-            )
-          : undefined;
+        const actingAgent = yield* resolveActingActorEffect(runtime, context);
         const reporterActorId = yield* fromSync(() =>
           resolveActingActorId(
             body.reporterActorId ?? body.reporterUserId,
@@ -576,13 +684,7 @@ function createServerApp(
           kind: "react" | "comment" | "share" | "dm";
           clientNonce?: string;
         }>();
-        const actingAgent = context.authenticatedIdentity
-          ? yield* getOrRegisterAuthenticatedAgentEffect(
-              runtime,
-              context.authenticatedIdentity,
-              context.authenticatedAgent
-            )
-          : undefined;
+        const actingAgent = yield* resolveActingActorEffect(runtime, context);
         const actorId = yield* fromSync(() =>
           resolveActingActorId(body.actorId, actingAgent, "actorId")
         );
@@ -604,11 +706,20 @@ function createServerApp(
         const limit = parseNumber(url.searchParams.get("limit"));
         const items = yield* runtime.getFeed(actorId, limit);
         const feed = yield* Effect.forEach(items, (item) =>
-          Effect.map(runtime.getActor(item.content.authorId), (author) => ({
-            ...item,
-            authorHandle: author.handle,
-            authorKind: author.kind
-          }))
+          Effect.flatMap(runtime.getActor(item.content.authorId), (author) =>
+            author.kind === "agent" && author.sponsorId
+              ? Effect.map(runtime.getActor(author.sponsorId), (sponsor) => ({
+                  ...item,
+                  authorHandle: author.handle,
+                  authorKind: author.kind,
+                  authorSponsorHandle: sponsor.handle
+                }))
+              : Effect.succeed({
+                  ...item,
+                  authorHandle: author.handle,
+                  authorKind: author.kind
+                })
+          )
         );
         return toJson({ feed });
       })

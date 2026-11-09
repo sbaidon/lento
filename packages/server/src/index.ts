@@ -32,10 +32,23 @@ const startServer = Effect.gen(function* () {
     identityVerifier,
     requireIdentityForWrites: runtimeConfig.requireIdentityForWrites,
     enableAdminUi: runtimeConfig.enableAdminUi,
-    enableWebUi: runtimeConfig.enableWebUi
+    enableWebUi: runtimeConfig.enableWebUi,
+    actorKeySecret: runtimeConfig.secret
   });
 
   yield* Effect.sync(() => {
+    if (runtimeConfig.secret === DEFAULT_PROTOCOL_CONFIG.serverSecret) {
+      console.warn(
+        "WARNING: LENTO_SERVER_SECRET is not set. Actor keys are signed with the public default secret and can be forged. Set it before exposing this server."
+      );
+    }
+
+    if (runtimeConfig.enableWebUi && !runtimeConfig.requireIdentityForWrites) {
+      console.warn(
+        "WARNING: web client is on without LENTO_REQUIRE_IDENTITY_FOR_WRITES=true. Anyone can write as any actor id. Fine locally, not on a public host."
+      );
+    }
+
     const host = runtimeConfig.hostname ?? "localhost";
     console.log(
       `Lento protocol server running at http://${host}:${server.port}${identityVerifier ? " with Moltbook identity verification" : ""}${runtimeConfig.requireIdentityForWrites ? " and write auth required" : ""}${runtimeConfig.enableWebUi ? " and web client enabled at /" : ""}${runtimeConfig.enableAdminUi ? " and admin ui enabled at /admin" : ""}${runtimeConfig.enableAdminUi ? ` (ws push every ${runtimeConfig.adminStreamIntervalMs}ms)` : ""}${runtimeConfig.idleTimeout !== undefined ? ` idleTimeout=${runtimeConfig.idleTimeout}s` : ""}${runtimeConfig.development ? " development=true" : ""}` +

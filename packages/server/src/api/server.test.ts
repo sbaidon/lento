@@ -469,6 +469,146 @@ describe("createHttpServer", () => {
     }
   });
 
+  describe("actor keys and sponsored agents", () => {
+    function createKeyServer(requireIdentityForWrites = true) {
+      const service = new ProtocolService({
+        ...DEFAULT_PROTOCOL_CONFIG,
+        serverSecret: "test-secret"
+      });
+      const server = createHttpServer(service, {
+        port: 0,
+        requireIdentityForWrites,
+        actorKeySecret: "key-secret"
+      });
+      const baseUrl = `http://127.0.0.1:${server.port}`;
+      const call = async (method: string, path: string, body?: unknown, key?: string) => {
+        const response = await fetch(`${baseUrl}${path}`, {
+          method,
+          headers: {
+            ...(body === undefined ? {} : { "content-type": "application/json" }),
+            ...(key ? { authorization: `Bearer ${key}` } : {})
+          },
+          body: body === undefined ? undefined : JSON.stringify(body)
+        });
+        return { status: response.status, data: await response.json() };
+      };
+      return { server, call };
+    }
+
+    test("signup returns a key that gates writes to that user", async () => {
+      const { server, call } = createKeyServer();
+      try {
+        const alice = await call("POST", "/users", { handle: "alice" });
+        const bob = await call("POST", "/users", { handle: "bob" });
+        expect(alice.status).toBe(201);
+        expect(alice.data.key).toStartWith(`lento_${alice.data.user.id}.`);
+
+        const me = await call("GET", "/me", undefined, alice.data.key);
+        expect(me.data.actor.handle).toBe("alice");
+        expect((await call("GET", "/me")).status).toBe(401);
+
+        const anonymous = await call("POST", "/content", {
+          authorId: alice.data.user.id,
+          body: "no key"
+        });
+        expect(anonymous.status).toBe(401);
+        expect(anonymous.data.error.code).toBe("identity_required");
+
+        const forged = await call(
+          "POST",
+          "/content",
+          { body: "forged" },
+          `lento_${alice.data.user.id}.AAAA`
+        );
+        expect(forged.status).toBe(401);
+        expect(forged.data.error.code).toBe("key_invalid");
+
+        const impersonation = await call(
+          "POST",
+          "/content",
+          { authorId: alice.data.user.id, body: "as alice" },
+          bob.data.key
+        );
+        expect(impersonation.status).toBe(403);
+        expect(impersonation.data.error.code).toBe("actor_forbidden");
+
+        const posted = await call("POST", "/content", { body: "as myself" }, alice.data.key);
+        expect(posted.status).toBe(201);
+        expect(posted.data.content.authorId).toBe(alice.data.user.id);
+      } finally {
+        server.stop(true);
+      }
+    });
+
+    test("a human sponsors, pays for, and can disable an agent", async () => {
+      const { server, call } = createKeyServer();
+      try {
+        const alice = await call("POST", "/users", { handle: "alice" });
+        const bob = await call("POST", "/users", { handle: "bob" });
+        const aliceKey = alice.data.key as string;
+        const post = await call("POST", "/content", { body: "human post" }, bob.data.key);
+
+        expect((await call("POST", "/agents", { handle: "helper" })).status).toBe(401);
+
+        const created = await call("POST", "/agents", { handle: "helper" }, aliceKey);
+        expect(created.status).toBe(201);
+        expect(created.data.agent.sponsorId).toBe(alice.data.user.id);
+        const agentKey = created.data.key as string;
+        const agentId = created.data.agent.id as string;
+
+        // Agents cannot sponsor agents.
+        const nested = await call("POST", "/agents", { handle: "nested" }, agentKey);
+        expect(nested.status).toBe(403);
+        expect(nested.data.error.code).toBe("sponsor_must_be_human");
+
+        const agentPost = await call("POST", "/content", { body: "agent post" }, agentKey);
+        expect(agentPost.status).toBe(201);
+        const reaction = await call(
+          "POST",
+          "/interactions",
+          { targetContentId: post.data.content.id, kind: "react", clientNonce: "n1" },
+          agentKey
+        );
+        expect(reaction.status).toBe(201);
+
+        const sponsor = await call("GET", `/users/${alice.data.user.id}`);
+        expect(sponsor.data.user.energy.current).toBeLessThan(alice.data.user.energy.current);
+
+        const vouch = await call("POST", "/vouches", { toActorId: bob.data.user.id }, agentKey);
+        expect(vouch.status).toBe(403);
+        expect(vouch.data.error.code).toBe("agent_cannot_vouch");
+
+        const feed = await call("GET", `/feed/${bob.data.user.id}`);
+        const agentItem = feed.data.feed.find(
+          (item: { content: { authorId: string } }) => item.content.authorId === agentId
+        );
+        expect(agentItem.authorKind).toBe("agent");
+        expect(agentItem.authorSponsorHandle).toBe("alice");
+
+        const listed = await call("GET", `/agents?sponsorId=${alice.data.user.id}`);
+        expect(listed.data.agents).toHaveLength(1);
+
+        const notSponsor = await call(
+          "POST",
+          `/agents/${agentId}/disable`,
+          undefined,
+          bob.data.key
+        );
+        expect(notSponsor.status).toBe(403);
+
+        const disabled = await call("POST", `/agents/${agentId}/disable`, undefined, aliceKey);
+        expect(disabled.status).toBe(200);
+        expect(disabled.data.agent.disabledAt).toBeTypeOf("number");
+
+        const afterDisable = await call("POST", "/content", { body: "still here" }, agentKey);
+        expect(afterDisable.status).toBe(403);
+        expect(afterDisable.data.error.code).toBe("agent_disabled");
+      } finally {
+        server.stop(true);
+      }
+    });
+  });
+
   test("serves a private admin dashboard when enabled", async () => {
     const server = createTestServer(undefined, false, true);
     const baseUrl = `http://127.0.0.1:${server.port}`;

@@ -70,6 +70,8 @@ export interface LentoApiClientOptions {
   fetcher?: FetchLike;
   headers?: Record<string, string>;
   moltbookIdentityToken?: string;
+  /** Lento actor key, sent as `Authorization: Bearer <key>`. */
+  actorKey?: string;
 }
 
 export class LentoApiClient {
@@ -90,8 +92,19 @@ export class LentoApiClient {
       ...fetcherOrOptions.headers,
       ...(fetcherOrOptions.moltbookIdentityToken
         ? { "x-moltbook-identity": fetcherOrOptions.moltbookIdentityToken }
-        : {})
+        : {}),
+      ...(fetcherOrOptions.actorKey ? { authorization: `Bearer ${fetcherOrOptions.actorKey}` } : {})
     };
+  }
+
+  withActorKey(key: string): LentoApiClient {
+    return new LentoApiClient(this.baseUrl, {
+      fetcher: this.fetcher,
+      headers: {
+        ...this.headers,
+        authorization: `Bearer ${key}`
+      }
+    });
   }
 
   withMoltbookIdentityToken(token: string): LentoApiClient {

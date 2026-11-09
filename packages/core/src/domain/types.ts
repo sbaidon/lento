@@ -45,8 +45,14 @@ export interface MoltbookOwnerProfile {
   xFollowerCount?: number;
 }
 
-export interface MoltbookIdentity {
-  provider: "moltbook";
+export type IdentityProvider = "moltbook" | "lento";
+
+/**
+ * Identity bound to an agent actor. `lento` identities are issued by this
+ * server for sponsored agents. `moltbook` is the legacy external verifier.
+ */
+export interface AgentIdentity {
+  provider: IdentityProvider;
   id: string;
   name: string;
   description?: string;
@@ -58,10 +64,17 @@ export interface MoltbookIdentity {
   owner?: MoltbookOwnerProfile;
 }
 
+/** @deprecated Use `AgentIdentity`. */
+export type MoltbookIdentity = AgentIdentity;
+
 export interface Agent extends ActorBase {
   kind: "agent";
-  identity: MoltbookIdentity;
+  identity: AgentIdentity;
   verifiedAt: number;
+  /** Human user who answers for this agent. Set for sponsored agents. */
+  sponsorId?: ActorId;
+  /** Set when the sponsor has switched the agent off. Disabled agents cannot write. */
+  disabledAt?: number;
 }
 
 export type Actor = User | Agent;
