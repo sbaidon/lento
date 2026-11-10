@@ -476,10 +476,8 @@ export function renderWebClientHtml(): string {
         "use strict";
 
         var STORAGE_KEY = "lento.session";
-        var INHALE_MS = 3200;
-        var READY_MIN_MS = 500;
-        var READY_MAX_MS = 2600;
-        var CONFIRM_WINDOW_MS = 4000;
+        var MAX_INHALE_MS = 3200;
+        var MIN_INHALE_MS = 1200;
         var ACTIONS = [
           { kind: "react", label: "React" },
           { kind: "share", label: "Share" }
@@ -513,8 +511,9 @@ export function renderWebClientHtml(): string {
           } catch (_error) { /* storage unavailable: session lasts until reload */ }
         }
 
-        function api(method, path, body) {
+        function api(method, path, body, breathPass) {
           var init = { method: method, headers: {} };
+          if (breathPass) { init.headers["x-lento-breath"] = breathPass; }
           if (state.key) { init.headers["authorization"] = "Bearer " + state.key; }
           if (body !== undefined) {
             init.headers["content-type"] = "application/json";
@@ -566,8 +565,10 @@ export function renderWebClientHtml(): string {
 
         /* ---- The Breath ------------------------------------------------ */
 
-        // Resolves true when the person confirms presence on the glow,
-        // false when they cancel. A missed window loops into another breath.
+        // The server runs the Breath: it picks the delay, opens a short window,
+        // and trades an on-time confirmation for a single-use pass. Resolves
+        // with that pass, or null when the person cancels. A missed window
+        // loops into another breath.
         function breathe(purpose) {
           return new Promise(function (resolve) {
             var overlay = $("breath");
@@ -576,6 +577,8 @@ export function renderWebClientHtml(): string {
             var orb = $("breath-orb");
             var timers = [];
             var done = false;
+            var ticket = null;
+            var confirming = false;
             var previousFocus = document.activeElement;
 
             function later(fn, ms) { timers.push(setTimeout(fn, ms)); }
@@ -591,7 +594,7 @@ export function renderWebClientHtml(): string {
               sub.textContent = subText;
             }
 
-            function finish(result) {
+            function finish(pass) {
               if (done) { return; }
               done = true;
               clearTimers();
@@ -602,34 +605,58 @@ export function renderWebClientHtml(): string {
               document.removeEventListener("keydown", onKey);
               state.breath = null;
               if (previousFocus && previousFocus.focus) { previousFocus.focus(); }
-              resolve(result);
+              resolve(pass);
             }
 
             function cycle(missed) {
               clearTimers();
-              setPhase(
-                "inhale",
-                "Breathe in",
-                missed ? "You missed the glow. No rush, go again." : purpose
-              );
-              later(function () {
-                setPhase("exhale", "Breathe out", "Wait for the glow.");
-                var wait = READY_MIN_MS + Math.random() * (READY_MAX_MS - READY_MIN_MS);
+              ticket = null;
+              confirming = false;
+              api("POST", "/breath", { actorId: state.user.id }).then(function (data) {
+                if (done) { return; }
+                ticket = data.breath;
+                var inhale = Math.max(
+                  MIN_INHALE_MS,
+                  Math.min(MAX_INHALE_MS, Math.round(ticket.readyInMs * 0.55))
+                );
+                overlay.style.setProperty("--inhale-ms", inhale + "ms");
+                setPhase(
+                  "inhale",
+                  "Breathe in",
+                  missed ? "You missed the glow. No rush, go again." : purpose
+                );
+                later(function () {
+                  setPhase("exhale", "Breathe out", "Wait for the glow.");
+                }, inhale);
                 later(function () {
                   setPhase("ready", "Now", "Tap the circle, or press space.");
-                  later(function () { cycle(true); }, CONFIRM_WINDOW_MS);
-                }, wait);
-              }, INHALE_MS);
+                  later(function () { cycle(true); }, ticket.windowMs);
+                }, ticket.readyInMs);
+              }).catch(function (error) {
+                if (done) { return; }
+                toast(error.message);
+                finish(null);
+              });
             }
 
             function onOrb() {
-              if (overlay.dataset.phase === "ready") { finish(true); }
+              if (overlay.dataset.phase !== "ready" || !ticket || confirming) { return; }
+              confirming = true;
+              clearTimers();
+              api("POST", "/breath/" + encodeURIComponent(ticket.id) + "/confirm", {
+                actorId: state.user.id
+              }).then(function (data) {
+                finish(data.pass);
+              }).catch(function () {
+                // Too late by the server's clock. Breathe again.
+                if (!done) { cycle(true); }
+              });
             }
 
-            function onCancel() { finish(false); }
+            function onCancel() { finish(null); }
 
             function onKey(event) {
-              if (event.key === "Escape") { finish(false); return; }
+              if (event.key === "Escape") { finish(null); return; }
               if (event.key === " " || event.key === "Enter") {
                 if (event.target === $("breath-cancel")) { return; }
                 event.preventDefault();
@@ -642,11 +669,10 @@ export function renderWebClientHtml(): string {
             document.addEventListener("keydown", onKey);
             state.breath = { cancel: onCancel };
 
-            overlay.dataset.phase = "exhale";
+            setPhase("exhale", "", purpose);
             overlay.hidden = false;
             orb.focus();
-            // Start on the next frame so the inhale transition animates from rest.
-            requestAnimationFrame(function () { requestAnimationFrame(function () { cycle(false); }); });
+            cycle(false);
           });
         }
 
@@ -772,14 +798,14 @@ export function renderWebClientHtml(): string {
         function interact(item, action) {
           var who = "@" + (item.authorHandle || "this post");
           breathe(action.label + " to " + who + ". Energy cost is rolled when you confirm.").then(
-            function (confirmed) {
-              if (!confirmed) { return; }
+            function (pass) {
+              if (!pass) { return; }
               return api("POST", "/interactions", {
                 actorId: state.user.id,
                 targetContentId: item.content.id,
                 kind: action.kind,
                 clientNonce: nonce()
-              }).then(function (data) {
+              }, pass).then(function (data) {
                 var it = data.interaction;
                 toast(
                   action.label + " sent. Cost " + it.appliedCost + " energy (base " +
@@ -850,9 +876,9 @@ export function renderWebClientHtml(): string {
           var body = $("compose").value.trim();
           if (!body) { return; }
           $("compose-error").textContent = "";
-          breathe("One breath before your words go out.").then(function (confirmed) {
-            if (!confirmed) { return; }
-            return api("POST", "/content", { authorId: state.user.id, body: body }).then(
+          breathe("One breath before your words go out.").then(function (pass) {
+            if (!pass) { return; }
+            return api("POST", "/content", { authorId: state.user.id, body: body }, pass).then(
               function () {
                 $("compose").value = "";
                 $("compose-count").textContent = "0 / 1000";

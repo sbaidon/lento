@@ -17,6 +17,7 @@ export interface ServerRuntimeConfig {
   clientIpHeader?: string;
   logRequests: boolean;
   contactEmail?: string;
+  requireBreath: boolean;
 }
 
 function parseOptionalString(raw: string | undefined): string | undefined {
@@ -82,7 +83,8 @@ export function loadServerRuntimeConfig(
       rateLimitEnabled: env.LENTO_RATE_LIMIT !== "off",
       clientIpHeader: parseOptionalString(env.LENTO_CLIENT_IP_HEADER)?.toLowerCase(),
       logRequests: parseBoolean(env.LENTO_LOG_REQUESTS),
-      contactEmail: parseOptionalString(env.LENTO_CONTACT_EMAIL)
+      contactEmail: parseOptionalString(env.LENTO_CONTACT_EMAIL),
+      requireBreath: parseBoolean(env.LENTO_REQUIRE_BREATH)
     }),
     catch: (error) => (error instanceof Error ? error : new Error(String(error)))
   });

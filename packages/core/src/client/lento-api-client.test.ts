@@ -98,6 +98,39 @@ describe("LentoApiClient", () => {
     expect(seen).toEqual(["Bearer lento_a.b", "Bearer lento_c.d"]);
   });
 
+  test("performs a breath and carries the pass on the next request", async () => {
+    const calls: Array<{ url: string; pass: string | null }> = [];
+    const slept: number[] = [];
+    const fetcher = stubFetch(async (input, init) => {
+      const url = String(input);
+      calls.push({ url, pass: new Headers(init?.headers).get("x-lento-breath") });
+      if (url.endsWith("/breath")) {
+        return new Response(JSON.stringify({ breath: { id: "brt_1", readyInMs: 4200 } }), {
+          status: 201
+        });
+      }
+      if (url.endsWith("/confirm")) {
+        return new Response(JSON.stringify({ pass: "brp_abc" }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    const api = new LentoApiClient("http://localhost:3000", fetcher);
+    const pass = await api.performBreath("usr_1", async (ms) => {
+      slept.push(ms);
+    });
+    await api.withBreathPass(pass).health();
+
+    expect(pass).toBe("brp_abc");
+    expect(slept).toEqual([4200]);
+    expect(calls.map((call) => call.url)).toEqual([
+      "http://localhost:3000/breath",
+      "http://localhost:3000/breath/brt_1/confirm",
+      "http://localhost:3000/health"
+    ]);
+    expect(calls[2]?.pass).toBe("brp_abc");
+  });
+
   test("sends moltbook identity token when configured", async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = [];
     const fetcher = stubFetch(async (input, init) => {

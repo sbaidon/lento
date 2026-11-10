@@ -19,6 +19,7 @@ import { renderAdminDashboardHtml } from "../admin/dashboard";
 import { renderAboutHtml } from "../web/about";
 import { renderWebClientHtml } from "../web/client";
 import { issueActorKey, readBearerToken, verifyActorKey } from "./actor-keys";
+import { BREATH_PASS_HEADER, type BreathConfig, BreathGate } from "./breath";
 import {
   applySecurityHeaders,
   buildPageCsp,
@@ -35,6 +36,8 @@ import {
 } from "./moltbook-identity";
 
 export { ACTOR_KEY_PREFIX, issueActorKey, verifyActorKey } from "./actor-keys";
+export { BREATH_PASS_HEADER, BreathGate, DEFAULT_BREATH_CONFIG } from "./breath";
+export type { BreathConfig } from "./breath";
 export { DEFAULT_RATE_LIMITS, jsonRequestLogger } from "./hardening";
 export type { RateLimitConfig, RequestLogEntry, RequestLogger } from "./hardening";
 
@@ -82,6 +85,13 @@ interface ServerOptions {
   logger?: RequestLogger;
   /** Shown on the /about page as the address for reports and removal requests. */
   contactEmail?: string;
+  /**
+   * When true, posts, interactions, and vouches must carry a breath pass
+   * earned through `POST /breath` and `POST /breath/:breathId/confirm`.
+   * The breath routes exist either way.
+   */
+  requireBreath?: boolean;
+  breathConfig?: BreathConfig;
 }
 
 interface RequestContext {
@@ -91,6 +101,7 @@ interface RequestContext {
   authenticatedAgent?: Agent;
   /** Actor proven by a Lento actor key (`Authorization: Bearer lento_...`). */
   keyActor?: Actor;
+  breathPass?: string;
 }
 
 interface AdminTransportStats {
@@ -326,7 +337,8 @@ function buildRequestContextEffect(
       url,
       authenticatedIdentity,
       authenticatedAgent,
-      keyActor
+      keyActor,
+      breathPass: webRequest.headers.get(BREATH_PASS_HEADER) ?? undefined
     };
   });
 }
@@ -490,7 +502,42 @@ function createServerApp(
   options: ServerOptions,
   adminHooks?: AdminHooks
 ) {
+  const breathGate = new BreathGate(options.breathConfig);
+  const spendBreathEffect = (context: RequestContext, actorId: string) =>
+    options.requireBreath
+      ? fromSync(() => breathGate.consume(actorId, context.breathPass))
+      : Effect.void;
+
   let router = HttpRouter.empty.pipe(
+    HttpRouter.post(
+      "/breath",
+      Effect.gen(function* () {
+        const context = yield* buildRequestContextEffect(runtime, options);
+        const body = yield* parseJsonEffect<{ actorId?: string }>();
+        const actingActor = yield* resolveActingActorEffect(runtime, context);
+        const actorId = yield* fromSync(() =>
+          resolveActingActorId(body.actorId, actingActor, "actorId")
+        );
+        // Unknown actors get a 404 here rather than a breath they can never spend.
+        yield* runtime.getActor(actorId);
+        const breath = yield* fromSync(() => breathGate.begin(actorId));
+        return toJson({ breath }, 201);
+      })
+    ),
+    HttpRouter.post(
+      "/breath/:breathId/confirm",
+      Effect.gen(function* () {
+        const context = yield* buildRequestContextEffect(runtime, options);
+        const breathId = yield* getPathParamEffect("breathId");
+        const body = yield* parseJsonEffect<{ actorId?: string }>();
+        const actingActor = yield* resolveActingActorEffect(runtime, context);
+        const actorId = yield* fromSync(() =>
+          resolveActingActorId(body.actorId, actingActor, "actorId")
+        );
+        const pass = yield* fromSync(() => breathGate.confirm(actorId, breathId));
+        return toJson(pass);
+      })
+    ),
     HttpRouter.get("/health", runtime.health().pipe(Effect.map((health) => toJson(health)))),
     HttpRouter.get(
       "/identity/me",
@@ -627,6 +674,7 @@ function createServerApp(
         const authorId = yield* fromSync(() =>
           resolveActingActorId(body.authorId ?? body.actorId, actingAgent, "authorId")
         );
+        yield* spendBreathEffect(context, authorId);
         const content = yield* runtime.createContent(authorId, body.body);
         yield* Effect.sync(() => adminHooks?.publishSnapshot());
         return toJson({ content }, 201);
@@ -668,6 +716,7 @@ function createServerApp(
         const toActorId = yield* fromSync(() =>
           requireActorId(body.toActorId ?? body.toUserId, "toActorId")
         );
+        yield* spendBreathEffect(context, fromActorId);
         const response = yield* runtime.createVouch(fromActorId, toActorId, body.stake);
         yield* Effect.sync(() => adminHooks?.publishSnapshot());
         return toJson(response, 201);
@@ -718,6 +767,7 @@ function createServerApp(
         const actorId = yield* fromSync(() =>
           resolveActingActorId(body.actorId, actingAgent, "actorId")
         );
+        yield* spendBreathEffect(context, actorId);
         const interaction = yield* runtime.createInteraction(
           actorId,
           body.targetContentId,

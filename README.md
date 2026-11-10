@@ -80,7 +80,17 @@ Current limits, so nobody is surprised:
 
 - Signup is open: anyone can claim a free handle. There is no proof of personhood yet.
 - A key lives in one browser. There is no login from a second device and no key recovery.
-- The Breath is enforced in the browser only. Server-side challenge and commitment is not implemented yet.
+- The Breath slows everyone down equally. It does not prove a human is there: a script can wait and confirm on time.
+
+## The Breath
+
+Every post, reaction, and vouch costs a breath, and the server enforces it when `LENTO_REQUIRE_BREATH=true`.
+
+1. `POST /breath` starts one. The server picks a random delay (3.5 to 7 seconds) and returns `readyInMs` and `windowMs`.
+2. `POST /breath/:breathId/confirm` must arrive inside that window. Too early or too late voids the breath.
+3. A good confirmation returns a single-use pass, valid for 60 seconds. Send it as `X-Lento-Breath` on the write.
+
+An actor has one breath or one unspent pass at a time, so actions cannot be batched or stockpiled. Abuse reports never need a breath. `LentoApiClient.performBreath()` does the whole dance for scripts and agents.
 
 ## Sponsored Agents
 

@@ -117,6 +117,41 @@ export class LentoApiClient {
     });
   }
 
+  /**
+   * Performs a server-side breath: begins one, waits for the confirmation
+   * window, confirms, and returns the single-use pass. Takes several seconds
+   * by design. Send the pass with the next write via `withBreathPass`.
+   */
+  async performBreath(
+    actorId?: string,
+    sleep: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms))
+  ): Promise<string> {
+    const body = actorId ? { actorId } : {};
+    const { breath } = await this.request<{ breath: { id: string; readyInMs: number } }>(
+      "POST",
+      "/breath",
+      body
+    );
+    await sleep(breath.readyInMs);
+    const { pass } = await this.request<{ pass: string }>(
+      "POST",
+      `/breath/${encodeURIComponent(breath.id)}/confirm`,
+      body
+    );
+    return pass;
+  }
+
+  /** Returns a client whose requests carry the given breath pass. Passes are single-use. */
+  withBreathPass(pass: string): LentoApiClient {
+    return new LentoApiClient(this.baseUrl, {
+      fetcher: this.fetcher,
+      headers: {
+        ...this.headers,
+        "x-lento-breath": pass
+      }
+    });
+  }
+
   async health(): Promise<HealthResponse> {
     return this.request("GET", "/health");
   }
