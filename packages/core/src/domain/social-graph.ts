@@ -16,6 +16,10 @@ export class SocialGraph {
     this.edges.set(key, vouch);
   }
 
+  removeVouch(fromActorId: ActorId, toActorId: ActorId): void {
+    this.edges.delete(makeKey(fromActorId, toActorId));
+  }
+
   hasVouch(fromActorId: ActorId, toActorId: ActorId): boolean {
     return this.edges.has(makeKey(fromActorId, toActorId));
   }

@@ -7,5 +7,5 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["@lento/server"]
+  "privatePackages": { "version": false, "tag": false }
 }

@@ -7,6 +7,7 @@ Bun + TypeScript monorepo for the Lento protocol reference stack.
 - `packages/core`: protocol engines, service layer, shared types, and HTTP API client
 - `packages/server`: Bun HTTP server exposing protocol endpoints
 - `packages/agents`: private simulation harness for local multi-agent protocol testing
+- `packages/harness`: deterministic simulation and fuzzing harness for the protocol
 - `packages/cli`: command-line client with OpenTUI "agent cockpit"
 
 Public npm packages:
@@ -28,6 +29,15 @@ Persistence defaults to in-memory unless you set `LENTO_DATABASE_PATH`.
 
 ```bash
 export LENTO_DATABASE_PATH=./.lento/data/lento.sqlite
+```
+
+## Testing
+
+`bun run test` runs unit tests, HTTP tests, simulation scenarios, and differential fuzzing. See [docs/testing.md](docs/testing.md).
+
+```bash
+bun run harness run all        # attack and baseline scenarios on a virtual clock
+bun run harness fuzz           # random operations against both stores
 ```
 
 ## Agent Lab

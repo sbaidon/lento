@@ -153,6 +153,25 @@ for (const harness of harnesses) {
       }
     });
 
+    test("a rejected operation leaves no trace in the store", () => {
+      const store = harness.createStore();
+      const service = new ProtocolService(DEFAULT_PROTOCOL_CONFIG, store);
+      try {
+        const alice = service.createUser({ handle: "alice", now: 1000 });
+        const before = JSON.stringify(store.getUser(alice.id));
+
+        // createContent refreshes and saves the author before validating the body.
+        expect(() =>
+          service.createContent({ authorId: alice.id, body: "   ", now: 9_000_000 })
+        ).toThrow("Content body cannot be empty.");
+
+        expect(JSON.stringify(store.getUser(alice.id))).toBe(before);
+        expect(store.countContent()).toBe(0);
+      } finally {
+        store.close?.();
+      }
+    });
+
     test("vouching updates recipient trust and records vouch stats", () => {
       const { service, close } = createService();
       try {

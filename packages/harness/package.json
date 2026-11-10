@@ -1,0 +1,20 @@
+{
+  "name": "@lento/harness",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Deterministic simulation and fuzzing harness for the Lento protocol.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@lento/core": "workspace:*",
+    "@lento/server": "workspace:*"
+  },
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "test": "bun test",
+    "typecheck": "bunx tsc --noEmit"
+  }
+}

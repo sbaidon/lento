@@ -76,6 +76,14 @@ interface CreateInteractionInput {
   now?: number;
 }
 
+export interface ProtocolServiceDeps {
+  /**
+   * Id generator. Defaults to random ids. Simulations and tests inject a
+   * deterministic one so that runs can be replayed exactly.
+   */
+  createId?: (prefix: string) => string;
+}
+
 function slugifyHandleCandidate(raw: string): string {
   const normalized = raw
     .trim()
@@ -102,12 +110,16 @@ export class ProtocolService {
   private readonly contentPolicy: ContentPolicy;
   private readonly lentoCostEngine: LentoCostEngine;
 
+  private readonly newId: (prefix: string) => string;
+
   constructor(
     private readonly config: ProtocolConfig = DEFAULT_PROTOCOL_CONFIG,
-    private readonly store: ProtocolStore = new InMemoryStore()
+    private readonly store: ProtocolStore = new InMemoryStore(),
+    deps: ProtocolServiceDeps = {}
   ) {
     this.contentPolicy = new ContentPolicy(config);
     this.lentoCostEngine = new LentoCostEngine(config);
+    this.newId = deps.createId ?? createId;
   }
 
   createUser(input: CreateUserInput): User {
@@ -117,7 +129,7 @@ export class ProtocolService {
       this.assertHandleAvailable(handle);
 
       const user: User = {
-        id: createId("usr"),
+        id: this.newId("usr"),
         kind: "user",
         handle,
         trustScore: this.trustEngine.initialScore,
@@ -159,7 +171,7 @@ export class ProtocolService {
           (slugifyHandleCandidate(input.identity.name) || `agent_${input.identity.id}`)
       );
       const agent: Agent = {
-        id: createId("agt"),
+        id: this.newId("agt"),
         kind: "agent",
         handle,
         trustScore: this.trustEngine.initialScore,
@@ -198,7 +210,7 @@ export class ProtocolService {
         );
       }
 
-      const id = createId("agt");
+      const id = this.newId("agt");
       const identity = { provider: "lento" as const, id, name: handle };
       const agent: Agent = {
         id,
@@ -296,7 +308,7 @@ export class ProtocolService {
       }
 
       const content: ContentItem = {
-        id: createId("cnt"),
+        id: this.newId("cnt"),
         authorId: author.id,
         body,
         createdAt: now
@@ -340,7 +352,7 @@ export class ProtocolService {
 
       const stake = this.normalizeStake(input.stake ?? 1);
       const vouch: Vouch = {
-        id: createId("vch"),
+        id: this.newId("vch"),
         fromActorId: fromActor.id,
         toActorId: toActor.id,
         stake,
@@ -406,7 +418,7 @@ export class ProtocolService {
       this.refreshActorEnergy(actor, now);
       const sponsor = this.findSponsor(actor, now);
 
-      const clientNonce = input.clientNonce ?? createId("nonce");
+      const clientNonce = input.clientNonce ?? this.newId("nonce");
       const cost = this.lentoCostEngine.calculate({
         kind: input.kind,
         actorId: actor.id,
@@ -428,7 +440,7 @@ export class ProtocolService {
       this.saveActor(actor);
 
       const interaction: Interaction = {
-        id: createId("int"),
+        id: this.newId("int"),
         actorId: actor.id,
         targetContentId: target.id,
         kind: input.kind,
@@ -446,13 +458,12 @@ export class ProtocolService {
     });
   }
 
-  getFeed(actorId: ActorId, limit = 20): FeedItem[] {
+  getFeed(actorId: ActorId, limit = 20, now = Date.now()): FeedItem[] {
     this.requireActor(actorId);
 
     const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(Math.floor(limit), 100)) : 20;
     const outgoing = new Set(this.store.listOutgoingVouches(actorId).map((edge) => edge.toActorId));
 
-    const now = Date.now();
     return this.store
       .listContent()
       .map((content) => {
