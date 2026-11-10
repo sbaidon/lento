@@ -42,6 +42,18 @@ const startServer = Effect.gen(function* () {
     store
   );
 
+  // Genesis status lives in config, not the database, so it is granted on every start.
+  for (const actorId of runtimeConfig.genesisActorIds) {
+    try {
+      const actor = service.grantGenesis(actorId);
+      console.log(`Genesis account: @${actor.handle} (${actor.id})`);
+    } catch (error) {
+      console.warn(
+        `WARNING: LENTO_GENESIS_ACTOR_IDS lists '${actorId}', which could not be made genesis: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
   const identityVerifier = createIdentityVerifierFromConfig(identityConfig);
   const server = createHttpServer(service, {
     port: runtimeConfig.port,

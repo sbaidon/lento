@@ -125,6 +125,11 @@ export class World {
     return this.register({ key, id: user.id, kind: "user", role, group, behavior });
   }
 
+  /** Makes a human a genesis account: a seed that trust flows out from. */
+  grantGenesis(actor: SimActor): void {
+    this.service.grantGenesis(actor.id, this.now);
+  }
+
   /** Has `sponsor` create an agent. Returns undefined when the protocol refuses. */
   sponsorAgent(
     sponsor: SimActor,

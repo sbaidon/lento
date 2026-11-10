@@ -71,20 +71,21 @@ Holds:
 
 Known gaps:
 
-| Gap                                                          | Measured                                                                 |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------ |
-| A ring of fresh accounts can vouch itself above honest users | ring 0.711, honest 0.484                                                 |
-| That ring can then report an honest user into the ground     | victim at 0.113 after 6 reports, because reports weigh by reporter trust |
-| Three fresh accounts can still dent an honest user           | victim 0.335, other honest users about 0.49                              |
-| False reports cost the reporter nothing                      | trolls stay at 0.500                                                     |
-| Posting is free for humans, so the Breath is the only limit  | 395 posts per hour from one account                                      |
-| A vouch can lower the recipient's trust                      | 0.500 to 0.489 after one full-stake vouch                                |
+| Gap                                                          | Measured                                                |
+| ------------------------------------------------------------ | ------------------------------------------------------- |
+| Six coordinated accounts can report an honest user below 0.3 | victim at 0.230 after 6 reports                         |
+| Three fresh accounts can still dent an honest user           | victim 0.386, other honest users 0.530                  |
+| False reports cost the reporter nothing                      | trolls stay at 0.500                                    |
+| A ring can grind its own trust above honest users            | ring 0.675, honest 0.540, after 525 reactions to itself |
+| Posting is free for humans, so the Breath is the only limit  | 392 posts per hour from one account                     |
 
 Closed and promoted to `must`:
 
-- Repeat reports from the same accounts cannot destroy a user. Before: 523 reports from 3 accounts took the victim to 0.011. Now each reporter counts once per target and reports weigh by the reporter's trust: 3 reports counted, the rest refused, victim at 0.335.
+- **Repeat reports cannot destroy a user.** Before: 523 reports from 3 accounts took the victim to 0.011. Now each reporter counts once per target and reports weigh by reporter trust.
+- **A ring of fresh accounts cannot vouch itself up.** Before: 6 accounts vouched themselves to 0.711. Now a vouch is worth only the standing other people gave the voucher, which traces back to a genesis account. The ring stays at 0.500, and 30 vouches inside a ring that ground out 525 reactions lifted nobody.
+- **A vouch never lowers the recipient's trust.** Before: 0.500 to 0.489. Trust is now derived from signals rather than blended toward a lower baseline.
 
-The sybil ring is now the keystone. Trust decides how much a vouch and a report are worth, so anything that inflates trust cheaply undermines both.
+What the remaining gaps have in common: every account starts with the same trust and the same report weight, and accounts are free. Rules inside the protocol can cap what one account does, but not how many accounts one person has. That needs identity that costs something.
 
 Also measured: before reports land, spam reaches 65% to 70% of honest feeds in the first half hour.
 

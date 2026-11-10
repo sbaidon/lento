@@ -3,6 +3,7 @@ import {
   honestHuman,
   lurker,
   reportBrigade,
+  ringGrinder,
   spammer,
   swarmOperator,
   sybilBoss,
@@ -18,6 +19,11 @@ function addHonest(world: World, count: number): SimActor[] {
 }
 
 const honest = (run: RunContext) => run.role("honest");
+
+/** Trust an actor could have earned alone, through its own interactions. */
+const selfEarned = (run: RunContext, actor: SimActor) =>
+  0.5 +
+  0.002 * Math.min(100, run.world.service.getActor(actor.id, run.world.now).stats.interactions);
 const fmt = (value: number, digits = 3) => value.toFixed(digits);
 
 /* ---- Shared expectations -------------------------------------------------- */
@@ -44,10 +50,12 @@ const lateSpamShareBelow = (limit: number, severity: Expectation["severity"]): E
 
 const baselineTown: Scenario = {
   id: "baseline-town",
-  description: "Only honest people and lurkers. The network should simply work.",
+  description: "Honest people and lurkers, one of them a genesis account. It should simply work.",
   hours: 12,
   build: (world) => {
-    addHonest(world, 20);
+    const people = addHonest(world, 20);
+    const genesis = people[0]!;
+    world.grantGenesis(genesis);
     for (let index = 1; index <= 5; index += 1) {
       world.addHuman(`lurker_${index}`, "lurker", "honest", lurker);
     }
@@ -69,6 +77,31 @@ const baselineTown: Scenario = {
         }
       },
       {
+        name: "no honest person ends below the trust they started with",
+        severity: "must",
+        check: (run) => {
+          const lowest = Math.min(...honest(run).map((actor) => run.trust(actor)));
+          return { pass: lowest >= 0.5, detail: `lowest honest trust ${fmt(lowest)}` };
+        }
+      },
+      {
+        name: "trust flows out from the genesis account to people it vouches for",
+        severity: "must",
+        check: (run) => {
+          const vouchedIds = new Set(
+            run.world.store.listOutgoingVouches(genesis.id).map((vouch) => vouch.toActorId)
+          );
+          const vouched = honest(run).filter((actor) => vouchedIds.has(actor.id));
+          const lifted = vouched.filter(
+            (actor) => run.trust(actor) > selfEarned(run, actor) + 1e-9
+          );
+          return {
+            pass: vouched.length > 0 && lifted.length === vouched.length,
+            detail: `${lifted.length} of ${vouched.length} people the genesis account vouched for stand above what they earned alone`
+          };
+        }
+      },
+      {
         name: "nothing an honest client does is rejected",
         severity: "must",
         check: (run) => {
@@ -82,28 +115,54 @@ const baselineTown: Scenario = {
 
 const firstVouch: Scenario = {
   id: "first-vouch",
-  description: "One person vouches for another at full stake. That should not hurt them.",
+  description: "A fresh account and a genesis account each vouch for someone at full stake.",
   hours: 0.1,
   build: (world) => {
-    const alice = world.addHuman("alice", "voucher", "honest", (w, self) => {
+    const once = (to: () => SimActor) => (w: World, self: SimActor) => {
       if (!self.memory.done) {
         self.memory.done = true;
-        w.breatheThen(self, { type: "vouch", to: bob, stake: w.protocol.maxVouchStake });
+        w.breatheThen(self, { type: "vouch", to: to(), stake: w.protocol.maxVouchStake });
       }
-    });
+    };
+    const alice = world.addHuman(
+      "alice",
+      "voucher",
+      "honest",
+      once(() => bob)
+    );
     const bob = world.addHuman("bob", "vouched", "honest", () => {});
+    const seed = world.addHuman(
+      "seed",
+      "genesis",
+      "honest",
+      once(() => carol)
+    );
+    const carol = world.addHuman("carol", "vouched", "honest", () => {});
+    world.grantGenesis(seed);
     const before = world.service.getActor(bob.id, world.now).trustScore;
 
     return [
       {
         name: "a vouch never lowers the recipient's trust",
-        severity: "known-gap",
+        severity: "must",
         check: (run) => {
           const after = run.trust(bob);
           const gave = run.count([alice], "vouch");
           return {
             pass: gave === 1 && after >= before,
-            detail: `trust went ${fmt(before)} to ${fmt(after)} after ${gave} vouch`
+            detail: `trust went ${fmt(before)} to ${fmt(after)} after ${gave} vouch from a fresh account`
+          };
+        }
+      },
+      {
+        name: "a genesis vouch lifts the recipient, a fresh account's vouch does not",
+        severity: "must",
+        check: (run) => {
+          const fromFresh = run.trust(bob);
+          const fromGenesis = run.trust(carol);
+          return {
+            pass: fromFresh === before && fromGenesis > before,
+            detail: `fresh voucher ${fmt(fromFresh)}, genesis voucher ${fmt(fromGenesis)}`
           };
         }
       }
@@ -281,7 +340,7 @@ const sybilRing: Scenario = {
     return [
       {
         name: "a ring of fresh accounts cannot vouch itself above honest users",
-        severity: "known-gap",
+        severity: "must",
         check: (run) => {
           const fake = run.meanTrust(quiet());
           const good = run.meanTrust(honest(run));
@@ -353,8 +412,10 @@ const reportBrigadeScenario: Scenario = {
         severity: "known-gap",
         check: (run) => {
           const trolls = run.meanTrust(run.role("troll"));
-          const good = run.meanTrust(honest(run).filter((actor) => actor !== victim));
-          return { pass: trolls < good, detail: `trolls ${fmt(trolls)}, honest ${fmt(good)}` };
+          return {
+            pass: trolls < 0.5,
+            detail: `trolls still at ${fmt(trolls)}, where they started`
+          };
         }
       }
     ];
@@ -363,7 +424,7 @@ const reportBrigadeScenario: Scenario = {
 
 const sybilBrigade: Scenario = {
   id: "sybil-brigade",
-  description: "A ring vouches itself up, then every member reports one innocent person.",
+  description: "Six accounts vouch for each other, then every one reports one innocent person.",
   hours: 3,
   build: (world) => {
     const people = addHonest(world, 15);
@@ -385,7 +446,7 @@ const sybilBrigade: Scenario = {
 
     return [
       {
-        name: "a ring that vouched itself up cannot report an honest user into the ground",
+        name: "six coordinated accounts cannot report an honest user below 0.3",
         severity: "known-gap",
         check: (run) => {
           const trust = run.trust(victim);
@@ -394,6 +455,54 @@ const sybilBrigade: Scenario = {
             pass: trust >= 0.3,
             detail: `victim trust ${fmt(trust)}, ring trust ${fmt(fake)}, ${run.count(ring, "report")} reports`
           };
+        }
+      }
+    ];
+  }
+};
+
+const grindingRing: Scenario = {
+  id: "grinding-ring",
+  description:
+    "A ring spends hours posting and reacting to itself to look established, then vouches.",
+  hours: 8,
+  build: (world) => {
+    addHonest(world, 10);
+    const ring: SimActor[] = [];
+    for (let index = 1; index <= 6; index += 1) {
+      ring.push(
+        world.addHuman(
+          `grinder_${index}`,
+          "grinder",
+          "attacker",
+          ringGrinder(() => ring, 6 * 3_600_000)
+        )
+      );
+    }
+
+    return [
+      {
+        name: "vouches inside a ring add nothing, however busy the ring has been",
+        severity: "must",
+        check: (run) => {
+          const vouches = run.count(ring, "vouch");
+          const reacts = run.count(ring, "interact");
+          const lifted = ring.filter(
+            (member) => run.trust(member) > selfEarned(run, member) + 1e-9
+          );
+          return {
+            pass: vouches === ring.length * (ring.length - 1) && reacts > 0 && lifted.length === 0,
+            detail: `${reacts} reactions and ${vouches} vouches inside the ring, ${lifted.length} members lifted by them`
+          };
+        }
+      },
+      {
+        name: "grinding alone cannot put a ring above honest users",
+        severity: "known-gap",
+        check: (run) => {
+          const fake = run.meanTrust(ring);
+          const good = run.meanTrust(honest(run));
+          return { pass: fake <= good, detail: `ring ${fmt(fake)}, honest ${fmt(good)}` };
         }
       }
     ];
@@ -453,6 +562,7 @@ export const SCENARIOS: Scenario[] = [
   sybilRing,
   reportBrigadeScenario,
   sybilBrigade,
+  grindingRing,
   breathCheaters
 ];
 

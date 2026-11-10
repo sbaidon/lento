@@ -111,6 +111,7 @@ export class ProtocolService {
   private readonly lentoCostEngine: LentoCostEngine;
 
   private readonly newId: (prefix: string) => string;
+  private readonly genesisIds = new Set<string>();
 
   constructor(
     private readonly config: ProtocolConfig = DEFAULT_PROTOCOL_CONFIG,
@@ -450,7 +451,12 @@ export class ProtocolService {
         actor.energy = this.energyEngine.spend(actor.energy, cost.cost, now);
       }
       actor.stats.interactions += 1;
-      actor.trustScore = this.trustEngine.adjustOnSuccessfulInteraction(actor.trustScore);
+      if (!this.genesisIds.has(actor.id)) {
+        actor.trustScore = this.trustEngine.adjustOnSuccessfulInteraction(
+          actor.trustScore,
+          actor.stats.interactions
+        );
+      }
       actor.energy = this.energyEngine.rebalanceForTrust(actor.energy, actor.trustScore, now);
       this.saveActor(actor);
 
@@ -556,13 +562,37 @@ export class ProtocolService {
     };
   }
 
-  private recomputeTrust(actorId: ActorId, now: number): number {
+  /**
+   * Marks an actor as a genesis account: a seed that trust flows out from.
+   * Genesis status is not stored. Grant it again on startup from config.
+   */
+  grantGenesis(actorId: ActorId, now = Date.now()): Actor {
+    return this.store.transaction(() => {
+      const actor = this.requireActor(actorId);
+      if (actor.kind !== "user") {
+        throw new ProtocolError("genesis_must_be_human", 400, "Only human users can be genesis.");
+      }
+      this.genesisIds.add(actor.id);
+      this.recomputeTrust(actor.id, now);
+      return this.requireActor(actor.id);
+    });
+  }
+
+  /**
+   * Re-derives an actor's trust from its signals. When the score moves, the
+   * accounts this actor vouched for are re-derived too, one hop out, since
+   * the worth of those vouches just changed.
+   */
+  private recomputeTrust(actorId: ActorId, now: number, propagate = true): number {
     const actor = this.requireActor(actorId);
+    const before = actor.trustScore;
 
     const incomingSignals = this.store.listIncomingVouches(actor.id).map((vouch) => {
       const voucher = this.requireActor(vouch.fromActorId);
       return {
         voucherTrust: voucher.trustScore,
+        // A genesis account's standing is all given, none self-earned.
+        voucherInteractions: this.genesisIds.has(voucher.id) ? 0 : voucher.stats.interactions,
         stake: vouch.stake
       };
     });
@@ -594,10 +624,20 @@ export class ProtocolService {
       .reduce((total, report) => total + weigh(report), 0);
     const abuseSeverityTotal = ownSeverity + sponsoredSeverity * this.config.sponsorLiabilityWeight;
 
-    const computed = this.trustEngine.computeFromSignals(incomingSignals, abuseSeverityTotal);
-    actor.trustScore = this.trustEngine.reconcile(actor.trustScore, computed);
+    actor.trustScore = this.trustEngine.compute({
+      vouches: incomingSignals,
+      abuseSeverityTotal,
+      interactions: actor.stats.interactions,
+      genesis: this.genesisIds.has(actor.id)
+    });
     actor.energy = this.energyEngine.rebalanceForTrust(actor.energy, actor.trustScore, now);
     this.saveActor(actor);
+
+    if (propagate && actor.trustScore !== before) {
+      for (const vouch of this.store.listOutgoingVouches(actor.id)) {
+        this.recomputeTrust(vouch.toActorId, now, false);
+      }
+    }
 
     return actor.trustScore;
   }

@@ -47,6 +47,7 @@ export interface ProtocolRuntime {
     now?: number
   ): Effect.Effect<Agent, unknown>;
   listSponsoredAgents(sponsorId: ActorId): Effect.Effect<Agent[], unknown>;
+  grantGenesis(actorId: ActorId, now?: number): Effect.Effect<Actor, unknown>;
   disableAgent(sponsorId: ActorId, agentId: ActorId, now?: number): Effect.Effect<Agent, unknown>;
   getActor(actorId: string, now?: number): Effect.Effect<Actor, unknown>;
   findAgentByIdentity(
@@ -116,6 +117,7 @@ export function makeProtocolRuntime(service: ProtocolService): ProtocolRuntime {
     createSponsoredAgent: (sponsorId, handle, now) =>
       fromService(() => service.createSponsoredAgent({ sponsorId, handle, now })),
     listSponsoredAgents: (sponsorId) => fromService(() => service.listSponsoredAgents(sponsorId)),
+    grantGenesis: (actorId, now) => fromService(() => service.grantGenesis(actorId, now)),
     disableAgent: (sponsorId, agentId, now) =>
       fromService(() => service.disableAgent({ sponsorId, agentId, now })),
     getActor: (actorId, now) => fromService(() => service.getActor(actorId, now)),

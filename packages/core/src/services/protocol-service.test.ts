@@ -241,30 +241,90 @@ for (const harness of harnesses) {
       }
     });
 
-    test("vouching updates recipient trust and records vouch stats", () => {
+    test("a vouch is worth the voucher's credibility and never lowers trust", () => {
       const { service, close } = createService();
       try {
         const now = 1000;
 
-        const alice = service.createUser({ handle: "alice", now });
+        const fresh = service.createUser({ handle: "fresh", now });
+        const seed = service.createUser({ handle: "seed", now });
         const bob = service.createUser({ handle: "bob", now });
+        const carol = service.createUser({ handle: "carol", now });
+        const dave = service.createUser({ handle: "dave", now });
 
-        const trustBefore = service.getUser(bob.id, now).trustScore;
-        const result = service.createVouch({
-          fromActorId: alice.id,
+        // A fresh account has no credibility yet: its vouch records, but moves nothing.
+        const fromFresh = service.createVouch({
+          fromActorId: fresh.id,
           toActorId: bob.id,
-          stake: 3,
+          stake: 5,
           now
         });
-        const trustAfter = service.getUser(bob.id, now).trustScore;
-
-        expect(result.trustScore).toBe(trustAfter);
-        expect(trustAfter).not.toBe(trustBefore);
+        expect(fromFresh.trustScore).toBe(bob.trustScore);
         expect(service.getUser(bob.id, now).stats.vouchesReceived).toBe(1);
-        expect(service.getUser(alice.id, now).stats.vouchesGiven).toBe(1);
+        expect(service.getUser(fresh.id, now).stats.vouchesGiven).toBe(1);
+
+        // A genesis account's vouch lifts the recipient.
+        expect(service.grantGenesis(seed.id, now).trustScore).toBe(0.9);
+        const fromSeed = service.createVouch({
+          fromActorId: seed.id,
+          toActorId: carol.id,
+          stake: 5,
+          now
+        });
+        expect(fromSeed.trustScore).toBeCloseTo(0.58, 6);
+
+        // Trust attenuates with distance from the seed.
+        const secondHand = service.createVouch({
+          fromActorId: carol.id,
+          toActorId: dave.id,
+          stake: 5,
+          now
+        });
+        expect(secondHand.trustScore).toBeGreaterThan(dave.trustScore);
+        expect(secondHand.trustScore).toBeLessThan(fromSeed.trustScore);
+
+        // A vouch given before the voucher had standing gains worth once they earn it.
+        service.createVouch({ fromActorId: seed.id, toActorId: fresh.id, stake: 5, now });
+        expect(service.getUser(bob.id, now).trustScore).toBeGreaterThan(bob.trustScore);
+
+        expect(() => service.grantGenesis("usr_missing", now)).toThrow("does not exist");
       } finally {
         close();
       }
+    });
+
+    test("trust is derived: the same signals give the same score in any order", () => {
+      const build = (order: "report-first" | "vouch-first") => {
+        const { service, close } = createService();
+        try {
+          const now = 1000;
+          const seed = service.createUser({ handle: "seed", now });
+          const target = service.createUser({ handle: "target", now });
+          const reporter = service.createUser({ handle: "reporter", now });
+          service.grantGenesis(seed.id, now);
+          const vouch = () =>
+            service.createVouch({ fromActorId: seed.id, toActorId: target.id, stake: 3, now });
+          const report = () =>
+            service.createAbuseReport({
+              reporterActorId: reporter.id,
+              targetActorId: target.id,
+              severity: 2,
+              now
+            });
+          if (order === "report-first") {
+            report();
+            vouch();
+          } else {
+            vouch();
+            report();
+          }
+          return service.getUser(target.id, now).trustScore;
+        } finally {
+          close();
+        }
+      };
+
+      expect(build("report-first")).toBe(build("vouch-first"));
     });
 
     test("interaction consumes energy", () => {
