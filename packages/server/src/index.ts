@@ -58,7 +58,8 @@ const startServer = Effect.gen(function* () {
     clientIpHeader: runtimeConfig.clientIpHeader,
     adminToken: runtimeConfig.adminToken,
     logger: runtimeConfig.logRequests ? jsonRequestLogger : undefined,
-    contactEmail: runtimeConfig.contactEmail
+    contactEmail: runtimeConfig.contactEmail,
+    requireBreath: runtimeConfig.requireBreath
   });
 
   yield* Effect.sync(() => {

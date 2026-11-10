@@ -17,6 +17,7 @@ primary_region = "sjc"
   LENTO_DATABASE_PATH = "/data/lento.sqlite"
   LENTO_ENABLE_WEB_UI = "true"
   LENTO_REQUIRE_IDENTITY_FOR_WRITES = "true"
+  LENTO_REQUIRE_BREATH = "true"
   LENTO_LOG_REQUESTS = "true"
   # Fly's proxy sets this header to the real client address.
   LENTO_CLIENT_IP_HEADER = "fly-client-ip"

@@ -683,6 +683,96 @@ describe("createHttpServer", () => {
     }
   });
 
+  test("required breath gates posts and interactions with a single-use pass", async () => {
+    const service = new ProtocolService({
+      ...DEFAULT_PROTOCOL_CONFIG,
+      serverSecret: "test-secret"
+    });
+    const server = createHttpServer(service, {
+      port: 0,
+      requireIdentityForWrites: true,
+      actorKeySecret: "key-secret",
+      requireBreath: true,
+      breathConfig: { minDelayMs: 60, maxDelayMs: 60, windowMs: 400, graceMs: 20, passTtlMs: 5000 }
+    });
+    const baseUrl = `http://127.0.0.1:${server.port}`;
+    const call = async (
+      path: string,
+      body: unknown,
+      key?: string,
+      pass?: string
+    ): Promise<{ status: number; data: any }> => {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(key ? { authorization: `Bearer ${key}` } : {}),
+          ...(pass ? { "x-lento-breath": pass } : {})
+        },
+        body: JSON.stringify(body)
+      });
+      return { status: response.status, data: await response.json() };
+    };
+    const wait = (ms: number) => new Promise((done) => setTimeout(done, ms));
+
+    try {
+      const alice = await call("/users", { handle: "alice" });
+      const bob = await call("/users", { handle: "bob" });
+      const aliceKey = alice.data.key as string;
+
+      const noBreath = await call("/content", { body: "too fast" }, aliceKey);
+      expect(noBreath.status).toBe(428);
+      expect(noBreath.data.error.code).toBe("breath_required");
+
+      expect((await call("/breath", {})).status).toBe(401);
+
+      const rushed = await call("/breath", {}, aliceKey);
+      expect(rushed.status).toBe(201);
+      expect(rushed.data.breath.readyInMs).toBe(60);
+      const tooEarly = await call(`/breath/${rushed.data.breath.id}/confirm`, {}, aliceKey);
+      expect(tooEarly.status).toBe(409);
+      expect(tooEarly.data.error.code).toBe("breath_too_early");
+
+      const begun = await call("/breath", {}, aliceKey);
+      await wait(90);
+      const stolen = await call(`/breath/${begun.data.breath.id}/confirm`, {}, bob.data.key);
+      expect(stolen.status).toBe(404);
+      const confirmed = await call(`/breath/${begun.data.breath.id}/confirm`, {}, aliceKey);
+      expect(confirmed.status).toBe(200);
+      const pass = confirmed.data.pass as string;
+
+      const asBob = await call("/content", { body: "borrowed breath" }, bob.data.key, pass);
+      expect(asBob.status).toBe(428);
+
+      const posted = await call("/content", { body: "worth the wait" }, aliceKey, pass);
+      expect(posted.status).toBe(201);
+
+      const reused = await call(
+        "/interactions",
+        { targetContentId: posted.data.content.id, kind: "react" },
+        aliceKey,
+        pass
+      );
+      expect(reused.status).toBe(428);
+
+      const missed = await call("/breath", {}, aliceKey);
+      await wait(60 + 400 + 20 + 80);
+      const late = await call(`/breath/${missed.data.breath.id}/confirm`, {}, aliceKey);
+      expect(late.status).toBe(410);
+      expect(late.data.error.code).toBe("breath_missed");
+
+      // Reporting abuse is never slowed down.
+      const report = await call(
+        "/abuse-reports",
+        { targetActorId: bob.data.user.id, severity: 1 },
+        aliceKey
+      );
+      expect(report.status).toBe(201);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("serves a private admin dashboard when enabled", async () => {
     const server = createTestServer(undefined, false, true);
     const baseUrl = `http://127.0.0.1:${server.port}`;

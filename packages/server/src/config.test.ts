@@ -20,7 +20,8 @@ describe("loadServerRuntimeConfig", () => {
         LENTO_RATE_LIMIT: "off",
         LENTO_CLIENT_IP_HEADER: "Fly-Client-IP",
         LENTO_LOG_REQUESTS: "true",
-        LENTO_CONTACT_EMAIL: " hello@lento.social "
+        LENTO_CONTACT_EMAIL: " hello@lento.social ",
+        LENTO_REQUIRE_BREATH: "true"
       })
     );
 
@@ -39,7 +40,8 @@ describe("loadServerRuntimeConfig", () => {
       rateLimitEnabled: false,
       clientIpHeader: "fly-client-ip",
       logRequests: true,
-      contactEmail: "hello@lento.social"
+      contactEmail: "hello@lento.social",
+      requireBreath: true
     });
 
     const defaults = Effect.runSync(loadServerRuntimeConfig({}));
