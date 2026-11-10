@@ -258,6 +258,8 @@ export function renderWebClientHtml(): string {
         font-size: 13px;
       }
 
+      .agent-form { margin-top: 12px; }
+
       .agent-row.off { color: var(--ink-faint); text-decoration: line-through; }
 
       .key-box {
@@ -276,6 +278,10 @@ export function renderWebClientHtml(): string {
         overflow-wrap: anywhere;
         user-select: all;
       }
+
+      .foot { margin-top: 28px; text-align: center; font-family: var(--mono); font-size: 11px; }
+
+      .foot a { color: var(--ink-soft); }
 
       .empty { text-align: center; color: var(--ink-soft); padding: 34px 18px; font-style: italic; }
 
@@ -424,7 +430,7 @@ export function renderWebClientHtml(): string {
             against them count against you.
           </p>
           <div id="agents"></div>
-          <form id="agent-form" class="row" autocomplete="off" style="margin-top: 12px">
+          <form id="agent-form" class="row agent-form" autocomplete="off">
             <input
               id="agent-handle"
               class="field"
@@ -453,6 +459,7 @@ export function renderWebClientHtml(): string {
         </div>
         <div id="feed"></div>
       </section>
+      <footer class="foot"><a href="/about">About, data, and rules</a></footer>
     </main>
 
     <div id="breath" class="breath" data-phase="idle" role="dialog" aria-modal="true" aria-labelledby="breath-cue" hidden>

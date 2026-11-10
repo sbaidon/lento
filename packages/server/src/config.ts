@@ -12,6 +12,16 @@ export interface ServerRuntimeConfig {
   requireIdentityForWrites: boolean;
   enableAdminUi: boolean;
   enableWebUi: boolean;
+  adminToken?: string;
+  rateLimitEnabled: boolean;
+  clientIpHeader?: string;
+  logRequests: boolean;
+  contactEmail?: string;
+}
+
+function parseOptionalString(raw: string | undefined): string | undefined {
+  const value = raw?.trim();
+  return value ? value : undefined;
 }
 
 function parsePort(raw: string | undefined): number {
@@ -66,8 +76,54 @@ export function loadServerRuntimeConfig(
       secret: env.LENTO_SERVER_SECRET ?? DEFAULT_PROTOCOL_CONFIG.serverSecret,
       requireIdentityForWrites: parseBoolean(env.LENTO_REQUIRE_IDENTITY_FOR_WRITES),
       enableAdminUi: parseBoolean(env.LENTO_ENABLE_ADMIN_UI),
-      enableWebUi: parseBoolean(env.LENTO_ENABLE_WEB_UI)
+      enableWebUi: parseBoolean(env.LENTO_ENABLE_WEB_UI),
+      adminToken: parseOptionalString(env.LENTO_ADMIN_TOKEN),
+      // On unless explicitly switched off.
+      rateLimitEnabled: env.LENTO_RATE_LIMIT !== "off",
+      clientIpHeader: parseOptionalString(env.LENTO_CLIENT_IP_HEADER)?.toLowerCase(),
+      logRequests: parseBoolean(env.LENTO_LOG_REQUESTS),
+      contactEmail: parseOptionalString(env.LENTO_CONTACT_EMAIL)
     }),
     catch: (error) => (error instanceof Error ? error : new Error(String(error)))
   });
+}
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
+
+/**
+ * Refuses configurations that are unsafe on a public host. A server bound to
+ * loopback is treated as local development and only gets warnings.
+ */
+export function checkDeploymentSafety(config: ServerRuntimeConfig): {
+  errors: string[];
+  warnings: string[];
+} {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const isLocal = config.hostname !== undefined && LOOPBACK_HOSTS.has(config.hostname);
+  const flag = (message: string) => (isLocal ? warnings : errors).push(message);
+
+  if (config.enableAdminUi && !config.adminToken) {
+    flag("LENTO_ENABLE_ADMIN_UI is on without LENTO_ADMIN_TOKEN: the admin UI would be public.");
+  }
+
+  if (config.secret === DEFAULT_PROTOCOL_CONFIG.serverSecret) {
+    flag("LENTO_SERVER_SECRET is not set: actor keys would be signed with a public default.");
+  }
+
+  if (config.enableWebUi && !config.requireIdentityForWrites) {
+    flag(
+      "LENTO_ENABLE_WEB_UI is on without LENTO_REQUIRE_IDENTITY_FOR_WRITES=true: anyone could write as any actor."
+    );
+  }
+
+  if (!config.databasePath) {
+    warnings.push("LENTO_DATABASE_PATH is not set: all data is in memory and lost on restart.");
+  }
+
+  if (!config.rateLimitEnabled) {
+    warnings.push("Rate limiting is off (LENTO_RATE_LIMIT=off).");
+  }
+
+  return { errors, warnings };
 }

@@ -16,14 +16,30 @@ import {
 } from "@lento/core";
 import { Effect, Either } from "effect";
 import { renderAdminDashboardHtml } from "../admin/dashboard";
+import { renderAboutHtml } from "../web/about";
 import { renderWebClientHtml } from "../web/client";
 import { issueActorKey, readBearerToken, verifyActorKey } from "./actor-keys";
+import {
+  applySecurityHeaders,
+  buildPageCsp,
+  classifyRequest,
+  isAdminAuthorized,
+  type RateLimitConfig,
+  RateLimiter,
+  type RequestLogger,
+  resolveClientIp
+} from "./hardening";
 import {
   type MoltbookIdentityVerifier,
   resolveAuthenticatedIdentityEffect
 } from "./moltbook-identity";
 
 export { ACTOR_KEY_PREFIX, issueActorKey, verifyActorKey } from "./actor-keys";
+export { DEFAULT_RATE_LIMITS, jsonRequestLogger } from "./hardening";
+export type { RateLimitConfig, RequestLogEntry, RequestLogger } from "./hardening";
+
+/** Largest request body the server will read. Posts cap at 1,000 characters. */
+export const DEFAULT_MAX_REQUEST_BODY_BYTES = 64 * 1024;
 
 export {
   createIdentityVerifierFromConfig,
@@ -52,6 +68,20 @@ interface ServerOptions {
    * are off: no key is returned on signup and bearer tokens are rejected.
    */
   actorKeySecret?: string;
+  /** Per-client request limits. Off when unset. */
+  rateLimit?: RateLimitConfig;
+  /**
+   * Header a trusted proxy sets to the real client address, such as
+   * `fly-client-ip`. Leave unset when clients connect directly.
+   */
+  clientIpHeader?: string;
+  /** Password for the admin UI and API, checked as HTTP Basic auth. */
+  adminToken?: string;
+  maxRequestBodyBytes?: number;
+  /** Called once per finished request. */
+  logger?: RequestLogger;
+  /** Shown on the /about page as the address for reports and removal requests. */
+  contactEmail?: string;
 }
 
 interface RequestContext {
@@ -727,7 +757,26 @@ function createServerApp(
   );
 
   if (options.enableWebUi) {
-    router = router.pipe(HttpRouter.get("/", Effect.succeed(toHtml(renderWebClientHtml()))));
+    const webClientHtml = renderWebClientHtml();
+    const webClientCsp = buildPageCsp(webClientHtml);
+    const aboutHtml = renderAboutHtml(options.contactEmail);
+    const aboutCsp = buildPageCsp(aboutHtml);
+    router = router.pipe(
+      HttpRouter.get(
+        "/about",
+        Effect.succeed(
+          toHtml(aboutHtml).pipe(HttpServerResponse.setHeader("content-security-policy", aboutCsp))
+        )
+      ),
+      HttpRouter.get(
+        "/",
+        Effect.succeed(
+          toHtml(webClientHtml).pipe(
+            HttpServerResponse.setHeader("content-security-policy", webClientCsp)
+          )
+        )
+      )
+    );
   }
 
   if (options.enableAdminUi) {
@@ -859,12 +908,14 @@ export function createHttpServer(
     publishSnapshot: publishAdminSnapshot
   });
   const handler = HttpApp.toWebHandler(app);
+  const rateLimiter = options.rateLimit ? new RateLimiter(options.rateLimit) : undefined;
 
   server = Bun.serve({
     port: options.port ?? 3000,
     hostname: options.hostname,
     idleTimeout: options.idleTimeout,
     development: options.development,
+    maxRequestBodySize: options.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES,
     websocket: {
       open(socket) {
         socket.subscribe(ADMIN_DASHBOARD_TOPIC);
@@ -879,32 +930,82 @@ export function createHttpServer(
       }
     },
     async fetch(request, incomingServer) {
+      const startedAt = performance.now();
+      const url = new URL(request.url);
+      const ip = resolveClientIp(
+        request,
+        incomingServer.requestIP(request)?.address,
+        options.clientIpHeader
+      );
+
+      const finish = (response: Response): Response => {
+        options.logger?.({
+          level: "info",
+          msg: "request",
+          time: new Date().toISOString(),
+          method: request.method,
+          path: url.pathname,
+          status: response.status,
+          durationMs: Math.round(performance.now() - startedAt),
+          ip
+        });
+        return applySecurityHeaders(response, request);
+      };
+
       try {
-        const url = new URL(request.url);
+        if (rateLimiter && url.pathname !== "/health") {
+          const decision = rateLimiter.check(classifyRequest(request.method, url.pathname), ip);
+          if (!decision.allowed) {
+            const limited = HttpServerResponse.toWeb(
+              toJson(
+                { error: { code: "rate_limited", message: "Too many requests. Slow down." } },
+                429
+              )
+            );
+            limited.headers.set("retry-after", String(decision.retryAfterSeconds));
+            return finish(limited);
+          }
+        }
+
+        const isAdminPath = url.pathname === "/admin" || url.pathname.startsWith("/admin/");
+        if (
+          options.enableAdminUi &&
+          options.adminToken &&
+          isAdminPath &&
+          !isAdminAuthorized(request, options.adminToken)
+        ) {
+          return finish(
+            new Response("Admin credentials required.", {
+              status: 401,
+              headers: { "www-authenticate": 'Basic realm="Lento admin", charset="UTF-8"' }
+            })
+          );
+        }
+
         if (options.enableAdminUi && url.pathname === "/admin/ws") {
           const validation = await Effect.runPromise(
             Effect.either(validateIdentityHeaderEffect(request, options))
           );
           if (Either.isLeft(validation)) {
-            return HttpServerResponse.toWeb(renderErrorResponse(validation.left));
+            return finish(HttpServerResponse.toWeb(renderErrorResponse(validation.left)));
           }
 
           if (incomingServer.upgrade(request, { data: { channel: "admin" } })) {
             return;
           }
 
-          return new Response("Failed to upgrade websocket.", { status: 500 });
+          return finish(new Response("Failed to upgrade websocket.", { status: 500 }));
         }
 
         const validation = await Effect.runPromise(
           Effect.either(validateIdentityHeaderEffect(request, options))
         );
         if (Either.isLeft(validation)) {
-          return HttpServerResponse.toWeb(renderErrorResponse(validation.left));
+          return finish(HttpServerResponse.toWeb(renderErrorResponse(validation.left)));
         }
-        return await handler(request);
+        return finish(await handler(request));
       } catch (error) {
-        return HttpServerResponse.toWeb(renderErrorResponse(error));
+        return finish(HttpServerResponse.toWeb(renderErrorResponse(error)));
       }
     }
   });

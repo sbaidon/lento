@@ -609,6 +609,80 @@ describe("createHttpServer", () => {
     });
   });
 
+  test("hardening: rate limits, body limit, security headers, admin auth, logging", async () => {
+    const service = new ProtocolService({
+      ...DEFAULT_PROTOCOL_CONFIG,
+      serverSecret: "test-secret"
+    });
+    const logged: Array<{ path: string; status: number; ip: string }> = [];
+    const server = createHttpServer(service, {
+      port: 0,
+      enableWebUi: true,
+      enableAdminUi: true,
+      adminToken: "admin-token",
+      contactEmail: "hello@lento.social",
+      clientIpHeader: "x-test-ip",
+      maxRequestBodyBytes: 2048,
+      rateLimit: {
+        signup: { limit: 2, windowMs: 60_000 },
+        write: { limit: 100, windowMs: 60_000 },
+        read: { limit: 100, windowMs: 60_000 }
+      },
+      logger: (entry) => logged.push(entry)
+    });
+    const baseUrl = `http://127.0.0.1:${server.port}`;
+    const signup = (handle: string, ip: string) =>
+      fetch(`${baseUrl}/users`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-test-ip": ip },
+        body: JSON.stringify({ handle })
+      });
+
+    try {
+      expect((await signup("one", "198.51.100.1")).status).toBe(201);
+      expect((await signup("two", "198.51.100.1")).status).toBe(201);
+      const limited = await signup("three", "198.51.100.1");
+      expect(limited.status).toBe(429);
+      expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+      expect((await limited.json()).error.code).toBe("rate_limited");
+      // A different client is not affected.
+      expect((await signup("four", "198.51.100.2")).status).toBe(201);
+
+      const oversized = await fetch(`${baseUrl}/content`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ authorId: "usr_x", body: "x".repeat(5000) })
+      });
+      expect(oversized.status).toBe(413);
+
+      const page = await fetch(`${baseUrl}/`, { headers: { "x-forwarded-proto": "https" } });
+      expect(page.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(page.headers.get("x-frame-options")).toBe("DENY");
+      expect(page.headers.get("strict-transport-security")).toContain("max-age=");
+      const csp = page.headers.get("content-security-policy") ?? "";
+      expect(csp).toContain("script-src 'sha256-");
+      expect(csp).not.toContain("unsafe-inline");
+      expect(await page.text()).not.toContain(' style="');
+
+      const about = await fetch(`${baseUrl}/about`);
+      expect(about.status).toBe(200);
+      expect(await about.text()).toContain("mailto:hello@lento.social");
+
+      const noAuth = await fetch(`${baseUrl}/admin/api/overview`);
+      expect(noAuth.status).toBe(401);
+      expect(noAuth.headers.get("www-authenticate")).toContain("Basic");
+      const authed = await fetch(`${baseUrl}/admin/api/overview`, {
+        headers: { authorization: `Basic ${btoa("admin:admin-token")}` }
+      });
+      expect(authed.status).toBe(200);
+
+      expect(logged.some((entry) => entry.path === "/users" && entry.status === 429)).toBe(true);
+      expect(logged.find((entry) => entry.path === "/users")?.ip).toBe("198.51.100.1");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("serves a private admin dashboard when enabled", async () => {
     const server = createTestServer(undefined, false, true);
     const baseUrl = `http://127.0.0.1:${server.port}`;
