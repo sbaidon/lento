@@ -12,6 +12,8 @@ concurrency:
 
 jobs:
   quality:
+    # Branch protection on main requires a check with exactly this name.
+    name: CI
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
