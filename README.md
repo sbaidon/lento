@@ -98,6 +98,7 @@ Private admin UI for local inspection. Disabled by default.
 
 ```bash
 export LENTO_ENABLE_ADMIN_UI=true
+export LENTO_ADMIN_TOKEN=choose-a-password   # required unless bound to loopback
 export LENTO_DEV_IDENTITY_MODE=true
 export LENTO_REQUIRE_IDENTITY_FOR_WRITES=true
 export LENTO_DATABASE_PATH=./.lento/data/lento.sqlite
@@ -110,6 +111,12 @@ open http://localhost:3000/admin
 ```
 
 This is for internal/local use only. The TUI remains the primary operator interface. The admin UI now uses a Bun WebSocket stream at `/admin/ws` for live snapshots and falls back to `/admin/api/snapshot` if needed.
+
+## Deploying
+
+The repo ships a `Dockerfile`, a `fly.toml`, and a backup script. See [docs/deploying.md](docs/deploying.md) for settings, the Fly.io steps, and backups.
+
+The server refuses to start on a public address with unsafe settings (default secret, web client without write auth, admin UI without a token).
 
 ## Persistence
 
