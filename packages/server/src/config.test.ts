@@ -21,7 +21,8 @@ describe("loadServerRuntimeConfig", () => {
         LENTO_CLIENT_IP_HEADER: "Fly-Client-IP",
         LENTO_LOG_REQUESTS: "true",
         LENTO_CONTACT_EMAIL: " hello@lento.social ",
-        LENTO_REQUIRE_BREATH: "true"
+        LENTO_REQUIRE_BREATH: "true",
+        LENTO_GENESIS_ACTOR_IDS: " usr_a, usr_b ,,"
       })
     );
 
@@ -41,13 +42,15 @@ describe("loadServerRuntimeConfig", () => {
       clientIpHeader: "fly-client-ip",
       logRequests: true,
       contactEmail: "hello@lento.social",
-      requireBreath: true
+      requireBreath: true,
+      genesisActorIds: ["usr_a", "usr_b"]
     });
 
     const defaults = Effect.runSync(loadServerRuntimeConfig({}));
     expect(defaults.rateLimitEnabled).toBe(true);
     expect(defaults.adminToken).toBeUndefined();
     expect(defaults.logRequests).toBe(false);
+    expect(defaults.genesisActorIds).toEqual([]);
   });
 
   test("fails on invalid port input", () => {

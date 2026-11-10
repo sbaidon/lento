@@ -151,6 +151,44 @@ export function sybilMember(ring: () => SimActor[]): Behavior {
   };
 }
 
+/**
+ * A ring member that first works hard to look established: it posts, and
+ * reacts to other members' posts as fast as its energy allows. After
+ * `grindMs` it vouches for every other member at the maximum stake.
+ */
+export function ringGrinder(ring: () => SimActor[], grindMs: number): Behavior {
+  const vouch = sybilMember(ring);
+  return (world, self) => {
+    if (world.now - world.startAt >= grindMs) {
+      vouch(world, self);
+      return;
+    }
+
+    if (world.rng.chance(perTick(world, 20 * 60_000))) {
+      world.breatheThen(self, { type: "post", body: `${self.key}: totally a real person` });
+      return;
+    }
+    if (!world.rng.chance(perTick(world, 30_000))) {
+      return;
+    }
+
+    const members = new Set(ring().map((member) => member.id));
+    const seen = memo(self, "ringSeen", () => new Set<string>());
+    const target = world
+      .feed(self, 100)
+      .find(
+        (item) =>
+          item.content.authorId !== self.id &&
+          members.has(item.content.authorId) &&
+          !seen.has(item.content.id)
+      );
+    if (target) {
+      seen.add(target.content.id);
+      world.breatheThen(self, { type: "interact", contentId: target.content.id, kind: "react" });
+    }
+  };
+}
+
 /** A ring member that also posts spam once its vouching is done. */
 export function sybilBoss(ring: () => SimActor[]): Behavior {
   const vouch = sybilMember(ring);

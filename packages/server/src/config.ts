@@ -18,6 +18,8 @@ export interface ServerRuntimeConfig {
   logRequests: boolean;
   contactEmail?: string;
   requireBreath: boolean;
+  /** Actor ids of genesis accounts: the seeds that trust flows out from. */
+  genesisActorIds: string[];
 }
 
 function parseOptionalString(raw: string | undefined): string | undefined {
@@ -84,7 +86,11 @@ export function loadServerRuntimeConfig(
       clientIpHeader: parseOptionalString(env.LENTO_CLIENT_IP_HEADER)?.toLowerCase(),
       logRequests: parseBoolean(env.LENTO_LOG_REQUESTS),
       contactEmail: parseOptionalString(env.LENTO_CONTACT_EMAIL),
-      requireBreath: parseBoolean(env.LENTO_REQUIRE_BREATH)
+      requireBreath: parseBoolean(env.LENTO_REQUIRE_BREATH),
+      genesisActorIds: (env.LENTO_GENESIS_ACTOR_IDS ?? "")
+        .split(",")
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0)
     }),
     catch: (error) => (error instanceof Error ? error : new Error(String(error)))
   });

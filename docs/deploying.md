@@ -20,6 +20,7 @@ Bound to loopback (`LENTO_SERVER_HOSTNAME=127.0.0.1`), these are warnings, so lo
 | `LENTO_DATABASE_PATH`                         | SQLite file. Put it on a persistent volume.                                                                  |
 | `LENTO_REQUIRE_IDENTITY_FOR_WRITES`           | `true` in production. Writes need an actor key.                                                              |
 | `LENTO_REQUIRE_BREATH`                        | `true` in production. Posts, interactions, and vouches need a breath pass.                                   |
+| `LENTO_GENESIS_ACTOR_IDS`                     | Comma-separated actor ids of genesis accounts. See below.                                                    |
 | `LENTO_ENABLE_WEB_UI`                         | Serves the web client at `/` and the about page at `/about`.                                                 |
 | `LENTO_CONTACT_EMAIL`                         | Shown on `/about` for reports and removal requests.                                                          |
 | `LENTO_CLIENT_IP_HEADER`                      | Header your proxy sets to the real client IP (`fly-client-ip` on Fly). Only set this behind a trusted proxy. |
@@ -28,6 +29,16 @@ Bound to loopback (`LENTO_SERVER_HOSTNAME=127.0.0.1`), these are warnings, so lo
 | `LENTO_ENABLE_ADMIN_UI` / `LENTO_ADMIN_TOKEN` | Admin dashboard at `/admin`, protected by HTTP Basic auth. Any username, the token as password.              |
 
 Default rate limits per client IP: 5 signups per hour, 30 writes per minute, 300 reads per minute. Request bodies are capped at 64 KB.
+
+## Genesis accounts
+
+Trust on Lento flows out from genesis accounts. A vouch is worth only as much standing as other people have given the voucher, so until someone is genesis, vouches are recorded but worth nothing.
+
+1. Deploy, then sign up as yourself.
+2. Find your actor id: it is the `usr_...` part of your key, or `GET /me`.
+3. Set it and restart: `fly secrets set LENTO_GENESIS_ACTOR_IDS=usr_...` (comma-separated for several).
+
+It is an id, not a handle, on purpose: anyone could sign up with a handle before you do. Genesis accounts start at 0.9 trust and their full-stake vouch is worth +0.08. Pick people you would stake the network on, and keep the list short.
 
 ## Fly.io
 
