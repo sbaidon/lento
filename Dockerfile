@@ -6,6 +6,7 @@ COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 COPY packages/cli/package.json packages/cli/
 COPY packages/agents/package.json packages/agents/
+COPY packages/harness/package.json packages/harness/
 RUN bun install --frozen-lockfile --production
 
 FROM oven/bun:1.3.9-slim

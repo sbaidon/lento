@@ -44,6 +44,14 @@
         "effect": "^3.19.19",
       },
     },
+    "packages/harness": {
+      "name": "@lento/harness",
+      "version": "0.1.0",
+      "dependencies": {
+        "@lento/core": "workspace:*",
+        "@lento/server": "workspace:*",
+      },
+    },
     "packages/server": {
       "name": "@lento/server",
       "version": "0.1.0",
@@ -158,6 +166,8 @@
     "@lento/cli": ["@lento/cli@workspace:packages/cli"],
 
     "@lento/core": ["@lento/core@workspace:packages/core"],
+
+    "@lento/harness": ["@lento/harness@workspace:packages/harness"],
 
     "@lento/server": ["@lento/server@workspace:packages/server"],
 
