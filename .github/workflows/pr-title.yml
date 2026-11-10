@@ -1,11 +1,16 @@
 name: PR Title
 
 on:
-  pull_request_target:
+  pull_request:
     types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
 
 jobs:
   lint-title:
+    # Branch protection on main requires a check with exactly this name.
+    name: PR Title
     runs-on: ubuntu-latest
     steps:
       - name: Validate conventional PR title
