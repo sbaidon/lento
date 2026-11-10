@@ -20,7 +20,7 @@ import type {
   UserId,
   Vouch
 } from "../domain/types";
-import { round } from "../domain/utils";
+import { clamp, round } from "../domain/utils";
 import { createId } from "../infra/id";
 import { InMemoryStore } from "../infra/in-memory-store";
 import type { ProtocolStore } from "../infra/protocol-store";
@@ -386,6 +386,21 @@ export class ProtocolService {
         );
       }
 
+      if (reporter.id === target.id) {
+        throw new ProtocolError("invalid_report", 400, "You cannot report yourself.");
+      }
+
+      // One report per reporter per target. Repeating it must not add weight.
+      const alreadyReported = this.store
+        .listAbuseReports()
+        .some(
+          (existing) =>
+            existing.reporterActorId === reporter.id && existing.targetActorId === target.id
+        );
+      if (alreadyReported) {
+        throw new ProtocolError("duplicate_report", 409, "You have already reported this account.");
+      }
+
       const severity = this.normalizeSeverity(input.severity);
       const report: AbuseReport = {
         reporterActorId: input.reporterActorId,
@@ -553,9 +568,20 @@ export class ProtocolService {
     });
 
     const reports = this.store.listAbuseReports();
+    // A report counts for as much as its reporter is trusted, so accounts
+    // with little standing cannot do much damage by reporting.
+    const reporterTrust = new Map<string, number>();
+    const weigh = (report: AbuseReport): number => {
+      let trust = reporterTrust.get(report.reporterActorId);
+      if (trust === undefined) {
+        trust = clamp(this.requireActor(report.reporterActorId).trustScore, 0, 1);
+        reporterTrust.set(report.reporterActorId, trust);
+      }
+      return report.severity * trust;
+    };
     const ownSeverity = reports
       .filter((report) => report.targetActorId === actor.id)
-      .reduce((total, report) => total + report.severity, 0);
+      .reduce((total, report) => total + weigh(report), 0);
 
     // Reports against a human's sponsored agents count against the human too,
     // including agents that were disabled afterwards.
@@ -565,7 +591,7 @@ export class ProtocolService {
         : new Set<string>();
     const sponsoredSeverity = reports
       .filter((report) => sponsoredIds.has(report.targetActorId))
-      .reduce((total, report) => total + report.severity, 0);
+      .reduce((total, report) => total + weigh(report), 0);
     const abuseSeverityTotal = ownSeverity + sponsoredSeverity * this.config.sponsorLiabilityWeight;
 
     const computed = this.trustEngine.computeFromSignals(incomingSignals, abuseSeverityTotal);

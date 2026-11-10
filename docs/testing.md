@@ -66,17 +66,25 @@ Holds:
 - A sponsor's spam swarm is bounded by the sponsor's energy: 93 agent posts in 6 hours, against 395 posts per hour for one unsponsored human spammer.
 - The sponsor is drained by their own agents and ends at the trust floor. Rotating agents does not shed that liability.
 - Reported spammers sink: spam is about 0% of honest feeds in the second half of every spam scenario.
+- Repeating a report adds nothing: one report per reporter per target.
 - Nothing is ever written without a breath, and confirming early never earns a pass.
 
 Known gaps:
 
-| Gap                                                          | Measured                                          |
-| ------------------------------------------------------------ | ------------------------------------------------- |
-| A vouch can lower the recipient's trust                      | 0.500 to 0.489 after one full-stake vouch         |
-| Posting is free for humans, so the Breath is the only limit  | 395 posts per hour from one account               |
-| A ring of fresh accounts can vouch itself above honest users | ring 0.711, honest 0.484                          |
-| Repeat reports from the same accounts can destroy a user     | victim at 0.011 after 523 reports from 3 accounts |
-| False reports cost the reporter nothing                      | trolls stay at 0.500                              |
+| Gap                                                          | Measured                                                                 |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| A ring of fresh accounts can vouch itself above honest users | ring 0.711, honest 0.484                                                 |
+| That ring can then report an honest user into the ground     | victim at 0.113 after 6 reports, because reports weigh by reporter trust |
+| Three fresh accounts can still dent an honest user           | victim 0.335, other honest users about 0.49                              |
+| False reports cost the reporter nothing                      | trolls stay at 0.500                                                     |
+| Posting is free for humans, so the Breath is the only limit  | 395 posts per hour from one account                                      |
+| A vouch can lower the recipient's trust                      | 0.500 to 0.489 after one full-stake vouch                                |
+
+Closed and promoted to `must`:
+
+- Repeat reports from the same accounts cannot destroy a user. Before: 523 reports from 3 accounts took the victim to 0.011. Now each reporter counts once per target and reports weigh by the reporter's trust: 3 reports counted, the rest refused, victim at 0.335.
+
+The sybil ring is now the keystone. Trust decides how much a vouch and a report are worth, so anything that inflates trust cheaply undermines both.
 
 Also measured: before reports land, spam reaches 65% to 70% of honest feeds in the first half hour.
 
