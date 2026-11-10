@@ -26,8 +26,54 @@ export class InMemoryStore implements ProtocolStore {
   private readonly abuseReports: AbuseReport[] = [];
   private readonly socialGraph = new SocialGraph();
 
+  /**
+   * Undo steps for the transaction in progress. Without this, an operation
+   * that failed halfway would keep its earlier writes, which SQLite rolls
+   * back. The two stores must agree.
+   */
+  private journal: Array<() => void> | undefined;
+
   transaction<A>(callback: () => A): A {
-    return callback();
+    if (this.journal) {
+      // Nested call: the outermost transaction owns commit and rollback.
+      return callback();
+    }
+
+    const journal: Array<() => void> = [];
+    this.journal = journal;
+    try {
+      return callback();
+    } catch (error) {
+      for (let index = journal.length - 1; index >= 0; index -= 1) {
+        journal[index]!();
+      }
+      throw error;
+    } finally {
+      this.journal = undefined;
+    }
+  }
+
+  private put<V>(map: Map<string, V>, key: string, value: V): void {
+    if (this.journal) {
+      const had = map.has(key);
+      const previous = map.get(key);
+      this.journal.push(() => {
+        if (had) {
+          map.set(key, previous as V);
+        } else {
+          map.delete(key);
+        }
+      });
+    }
+    map.set(key, value);
+  }
+
+  private remove<V>(map: Map<string, V>, key: string): void {
+    if (this.journal && map.has(key)) {
+      const previous = map.get(key) as V;
+      this.journal.push(() => map.set(key, previous));
+    }
+    map.delete(key);
   }
 
   getUser(userId: ActorId): User | undefined {
@@ -36,7 +82,7 @@ export class InMemoryStore implements ProtocolStore {
   }
 
   saveUser(user: User): void {
-    this.users.set(user.id, clone(user));
+    this.put(this.users, user.id, clone(user));
   }
 
   listUsers(): User[] {
@@ -53,7 +99,7 @@ export class InMemoryStore implements ProtocolStore {
   }
 
   saveAgent(agent: Agent): void {
-    this.agents.set(agent.id, clone(agent));
+    this.put(this.agents, agent.id, clone(agent));
   }
 
   listAgents(): Agent[] {
@@ -69,11 +115,11 @@ export class InMemoryStore implements ProtocolStore {
   }
 
   setActorHandle(handle: string, actorId: ActorId): void {
-    this.actorIdsByHandle.set(handle, actorId);
+    this.put(this.actorIdsByHandle, handle, actorId);
   }
 
   deleteActorHandle(handle: string): void {
-    this.actorIdsByHandle.delete(handle);
+    this.remove(this.actorIdsByHandle, handle);
   }
 
   getAgentIdByIdentity(identity: MoltbookIdentity | string): ActorId | undefined {
@@ -83,7 +129,7 @@ export class InMemoryStore implements ProtocolStore {
 
   setAgentIdentity(identity: MoltbookIdentity | string, actorId: ActorId): void {
     const key = typeof identity === "string" ? identity : makeIdentityKey(identity);
-    this.agentsByIdentity.set(key, actorId);
+    this.put(this.agentsByIdentity, key, actorId);
   }
 
   getContent(contentId: ContentId): ContentItem | undefined {
@@ -92,7 +138,7 @@ export class InMemoryStore implements ProtocolStore {
   }
 
   saveContent(content: ContentItem): void {
-    this.content.set(content.id, clone(content));
+    this.put(this.content, content.id, clone(content));
   }
 
   listContent(): ContentItem[] {
@@ -104,7 +150,7 @@ export class InMemoryStore implements ProtocolStore {
   }
 
   saveInteraction(interaction: Interaction): void {
-    this.interactions.set(interaction.id, clone(interaction));
+    this.put(this.interactions, interaction.id, clone(interaction));
   }
 
   listInteractions(): Interaction[] {
@@ -117,6 +163,9 @@ export class InMemoryStore implements ProtocolStore {
 
   addAbuseReport(report: AbuseReport): void {
     this.abuseReports.push(clone(report));
+    this.journal?.push(() => {
+      this.abuseReports.pop();
+    });
   }
 
   listAbuseReports(): AbuseReport[] {
@@ -133,6 +182,7 @@ export class InMemoryStore implements ProtocolStore {
 
   addVouch(vouch: Vouch): void {
     this.socialGraph.addVouch(clone(vouch));
+    this.journal?.push(() => this.socialGraph.removeVouch(vouch.fromActorId, vouch.toActorId));
   }
 
   listVouches(): Vouch[] {
@@ -148,6 +198,34 @@ export class InMemoryStore implements ProtocolStore {
   }
 
   clear(): void {
+    if (this.journal) {
+      const maps = [
+        this.users,
+        this.agents,
+        this.actorIdsByHandle,
+        this.agentsByIdentity,
+        this.content,
+        this.interactions
+      ] as Array<Map<string, unknown>>;
+      const saved = maps.map((map) => new Map(map));
+      const reports = [...this.abuseReports];
+      const vouches = this.socialGraph.listAll();
+      this.journal.push(() => {
+        maps.forEach((map, index) => {
+          map.clear();
+          for (const [key, value] of saved[index]!) {
+            map.set(key, value);
+          }
+        });
+        this.abuseReports.length = 0;
+        this.abuseReports.push(...reports);
+        this.socialGraph.clear();
+        for (const vouch of vouches) {
+          this.socialGraph.addVouch(vouch);
+        }
+      });
+    }
+
     this.users.clear();
     this.agents.clear();
     this.actorIdsByHandle.clear();
