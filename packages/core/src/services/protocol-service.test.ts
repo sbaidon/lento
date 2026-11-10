@@ -172,6 +172,75 @@ for (const harness of harnesses) {
       }
     });
 
+    test("reports count once per reporter and weigh by the reporter's trust", () => {
+      const { service, close } = createService();
+      try {
+        const now = 1000;
+        const target = service.createUser({ handle: "target", now });
+        const twin = service.createUser({ handle: "twin", now });
+        const reporter = service.createUser({ handle: "reporter", now });
+        const voucher = service.createUser({ handle: "voucher", now });
+        const lowly = service.createUser({ handle: "lowly", now });
+        const flagger = service.createUser({ handle: "flagger", now });
+
+        const first = service.createAbuseReport({
+          reporterActorId: reporter.id,
+          targetActorId: target.id,
+          severity: 5,
+          now
+        });
+        expect(first.trustScore).toBeLessThan(target.trustScore);
+
+        expect(() =>
+          service.createAbuseReport({
+            reporterActorId: reporter.id,
+            targetActorId: target.id,
+            severity: 5,
+            now
+          })
+        ).toThrow("already reported");
+        expect(service.getUser(target.id, now).trustScore).toBe(first.trustScore);
+        expect(service.getUser(target.id, now).stats.abuseReports).toBe(1);
+
+        expect(() =>
+          service.createAbuseReport({
+            reporterActorId: reporter.id,
+            targetActorId: reporter.id,
+            severity: 1,
+            now
+          })
+        ).toThrow("cannot report yourself");
+
+        // Knock `lowly` down, then compare a report from them with one from an
+        // account in good standing against two identical targets.
+        service.createAbuseReport({
+          reporterActorId: flagger.id,
+          targetActorId: lowly.id,
+          severity: 5,
+          now
+        });
+        expect(service.getUser(lowly.id, now).trustScore).toBeLessThan(voucher.trustScore);
+
+        const a = service.createUser({ handle: "target_a", now });
+        const b = service.createUser({ handle: "target_b", now });
+        const byTrusted = service.createAbuseReport({
+          reporterActorId: twin.id,
+          targetActorId: a.id,
+          severity: 5,
+          now
+        });
+        const byLowly = service.createAbuseReport({
+          reporterActorId: lowly.id,
+          targetActorId: b.id,
+          severity: 5,
+          now
+        });
+        expect(byLowly.trustScore).toBeGreaterThan(byTrusted.trustScore);
+      } finally {
+        close();
+      }
+    });
+
     test("vouching updates recipient trust and records vouch stats", () => {
       const { service, close } = createService();
       try {

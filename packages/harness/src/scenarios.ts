@@ -324,13 +324,27 @@ const reportBrigadeScenario: Scenario = {
     return [
       {
         name: "repeat reports from the same accounts cannot destroy a user",
+        severity: "must",
+        check: (run) => {
+          const trust = run.trust(victim);
+          const trolls = run.role("troll");
+          const counted = run.count(trolls, "report");
+          const refused = run.rejections(trolls, (key) => key.endsWith(":duplicate_report"));
+          return {
+            pass: trust >= 0.3 && counted === trolls.length && refused > 0,
+            detail: `victim trust ${fmt(trust)}, ${counted} reports counted, ${refused} repeats refused`
+          };
+        }
+      },
+      {
+        name: "three fresh accounts cannot take more than 0.05 off an honest user",
         severity: "known-gap",
         check: (run) => {
           const trust = run.trust(victim);
-          const reports = run.count(run.role("troll"), "report");
+          const others = run.meanTrust(honest(run).filter((actor) => actor !== victim));
           return {
-            pass: trust >= 0.3,
-            detail: `victim trust ${fmt(trust)} after ${reports} reports from 3 accounts`
+            pass: others - trust <= 0.05,
+            detail: `victim ${fmt(trust)}, other honest users ${fmt(others)}`
           };
         }
       },
@@ -341,6 +355,45 @@ const reportBrigadeScenario: Scenario = {
           const trolls = run.meanTrust(run.role("troll"));
           const good = run.meanTrust(honest(run).filter((actor) => actor !== victim));
           return { pass: trolls < good, detail: `trolls ${fmt(trolls)}, honest ${fmt(good)}` };
+        }
+      }
+    ];
+  }
+};
+
+const sybilBrigade: Scenario = {
+  id: "sybil-brigade",
+  description: "A ring vouches itself up, then every member reports one innocent person.",
+  hours: 3,
+  build: (world) => {
+    const people = addHonest(world, 15);
+    const victim = people[0]!;
+    const ring: SimActor[] = [];
+    for (let index = 1; index <= 6; index += 1) {
+      const vouch = sybilMember(() => ring);
+      ring.push(
+        world.addHuman(`sybil_${index}`, "sybil", "attacker", (w, self) => {
+          vouch(w, self);
+          // Report once the ring has finished inflating itself.
+          if (!self.busy && !self.memory.reported && w.now - w.startAt > 30 * 60_000) {
+            self.memory.reported = true;
+            w.report(self, victim, 5);
+          }
+        })
+      );
+    }
+
+    return [
+      {
+        name: "a ring that vouched itself up cannot report an honest user into the ground",
+        severity: "known-gap",
+        check: (run) => {
+          const trust = run.trust(victim);
+          const fake = run.meanTrust(ring);
+          return {
+            pass: trust >= 0.3,
+            detail: `victim trust ${fmt(trust)}, ring trust ${fmt(fake)}, ${run.count(ring, "report")} reports`
+          };
         }
       }
     ];
@@ -399,6 +452,7 @@ export const SCENARIOS: Scenario[] = [
   sponsorRotation,
   sybilRing,
   reportBrigadeScenario,
+  sybilBrigade,
   breathCheaters
 ];
 
