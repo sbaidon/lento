@@ -140,6 +140,83 @@ paths:
                     description: Actor key for the new user. Present when the server issues actor keys.
         default:
           $ref: "#/components/responses/ErrorResponse"
+  /breath:
+    post:
+      summary: Begin a breath for the acting actor
+      description: >-
+        The server picks a random delay. Confirm inside the window that opens
+        after `readyInMs` to earn a single-use pass. Beginning a new breath
+        discards any breath or unspent pass the actor had.
+      operationId: beginBreath
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                actorId:
+                  type: string
+                  description: Only needed for unauthenticated local use.
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [breath]
+                properties:
+                  breath:
+                    type: object
+                    required: [id, readyInMs, windowMs]
+                    properties:
+                      id:
+                        type: string
+                      readyInMs:
+                        type: integer
+                      windowMs:
+                        type: integer
+        default:
+          $ref: "#/components/responses/ErrorResponse"
+  /breath/{breathId}/confirm:
+    post:
+      summary: Confirm a breath inside its window and receive a single-use pass
+      description: >-
+        Send the returned pass in the `X-Lento-Breath` header of the next post,
+        interaction, or vouch. Errors are `409 breath_too_early`,
+        `410 breath_missed`, and `404 breath_not_found`.
+      operationId: confirmBreath
+      parameters:
+        - in: path
+          name: breathId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                actorId:
+                  type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [pass, expiresInMs]
+                properties:
+                  pass:
+                    type: string
+                  expiresInMs:
+                    type: integer
+        default:
+          $ref: "#/components/responses/ErrorResponse"
   /me:
     get:
       summary: Actor authenticated by the request's actor key

@@ -19,6 +19,7 @@ Bound to loopback (`LENTO_SERVER_HOSTNAME=127.0.0.1`), these are warnings, so lo
 | `LENTO_SERVER_SECRET`                         | Signs actor keys and cost proofs. Long and random. Changing it logs everyone out.                            |
 | `LENTO_DATABASE_PATH`                         | SQLite file. Put it on a persistent volume.                                                                  |
 | `LENTO_REQUIRE_IDENTITY_FOR_WRITES`           | `true` in production. Writes need an actor key.                                                              |
+| `LENTO_REQUIRE_BREATH`                        | `true` in production. Posts, interactions, and vouches need a breath pass.                                   |
 | `LENTO_ENABLE_WEB_UI`                         | Serves the web client at `/` and the about page at `/about`.                                                 |
 | `LENTO_CONTACT_EMAIL`                         | Shown on `/about` for reports and removal requests.                                                          |
 | `LENTO_CLIENT_IP_HEADER`                      | Header your proxy sets to the real client IP (`fly-client-ip` on Fly). Only set this behind a trusted proxy. |
